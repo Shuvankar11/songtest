@@ -726,12 +726,11 @@
             let artist = song.artist ? song.artist.split(',')[0].trim() : '';
             let title = song.name.split('(')[0].trim();
             
-            // Priority Queries: 1. Same Type/Vibe -> 2. Artist Mix -> 3. Fallback Trending Type
             let queriesToTry = [
-                `${title} similar ${lang} songs`, // Tries to match the exact song vibe/type
-                `${artist} best ${lang} mix`,     // Tries to get the artist's vibe mix
-                `top trending ${lang} hits`,      // Fallback: If out of vibe, get different trending type
-                `latest viral ${lang} audio`      // Fallback 2
+                `${title} similar ${lang} songs`,
+                `${artist} best ${lang} mix`,
+                `top trending ${lang} hits`,
+                `latest viral ${lang} audio`
             ];
 
             let newSongs = [];
@@ -741,7 +740,6 @@
                     s.name.toLowerCase().trim() !== song.name.toLowerCase().trim() && 
                     !currentQueue.some(cq => cq.url === s.url)
                 );
-                // Agar 5 se zyada fresh gane mil gaye us type ke, toh ruk jao
                 if (newSongs.length > 5) break; 
             }
 
@@ -752,18 +750,19 @@
             renderUpNextUI(); 
         }
 
+        // 🔥 FIX: RENDER WHOLE LIST (PAST SONGS DIMMED) & AUTO-SCROLL 🔥
         function renderUpNextUI() {
-            // Visual queue starts exactly from the currently playing song
-            let visualQueue = currentQueue.slice(currentIndex);
-            
-            if(visualQueue.length > 0) {
-                let html = visualQueue.map((sq, i) => {
-                    let isPlaying = (i === 0);
+            if(currentQueue.length > 0) {
+                let html = currentQueue.map((sq, i) => {
+                    let isPlaying = (i === currentIndex);
                     let titleColor = isPlaying ? 'text-primary' : 'text-white';
                     let bgClass = isPlaying ? 'bg-white/5 border border-primary/20' : 'hover:bg-white/5 border border-transparent';
                     
+                    // Dim the past songs slightly
+                    let opacityClass = i < currentIndex ? 'opacity-50' : 'opacity-100';
+                    
                     return `
-                    <div onclick="playFromUpNext(${i})" class="flex items-center gap-3 p-2 rounded-xl cursor-pointer transition ${bgClass}">
+                    <div id="queue-item-${i}" onclick="playFromUpNext(${i})" class="flex items-center gap-3 p-2 rounded-xl cursor-pointer transition ${bgClass} ${opacityClass}">
                         <img src="${sq.img}" onerror="this.onerror=null; this.src='${fallbackImg}'" class="w-12 h-12 rounded-lg object-cover shadow-md shrink-0"/>
                         <div class="overflow-hidden flex-1"><h4 class="text-sm font-bold ${titleColor} truncate">${sq.name}</h4><p class="text-xs text-on-surface-variant truncate">${sq.artist}</p></div>
                         ${isPlaying ? '<span class="material-symbols-outlined text-primary text-[18px]">equalizer</span>' : ''}
@@ -776,33 +775,40 @@
                     </button>
                 `;
                 queueList.innerHTML = html;
+
+                // Automatic scroll to the currently playing song smoothly
+                setTimeout(() => {
+                    let activeItem = document.getElementById('queue-item-' + currentIndex);
+                    if(activeItem) {
+                        activeItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                }, 100);
+
             } else { 
                 queueList.innerHTML = `<p class="text-xs text-on-surface-variant animate-pulse">Fetching more vibes...</p>`; 
             }
         }
 
         window.loadMoreUpNext = async () => {
-            // Seed 'Load More' with the current playing song to get same vibe
             let baseSong = currentQueue[currentIndex];
             await fetchSmartQueue(baseSong); 
         };
 
-        // 🔥 YOUTUBE MUSIC STYLE QUEUE JUMP 🔥
-        window.playFromUpNext = (visualIndex) => { 
-            // If user clicks the already playing song (index 0), do nothing
-            if (visualIndex === 0) return; 
+        // 🔥 FIX: YT MUSIC STYLE QUEUE JUMP LOGIC 🔥
+        window.playFromUpNext = (index) => { 
+            if (index === currentIndex) return; 
             
-            // 1. Find the actual position of the clicked song in the background list
-            let actualIndex = currentIndex + visualIndex;
+            let clickedSong = currentQueue.splice(index, 1)[0];
             
-            // 2. Remove the song from that position
-            let clickedSong = currentQueue.splice(actualIndex, 1)[0];
-            
-            // 3. Insert it immediately after the currently playing song
-            currentQueue.splice(currentIndex + 1, 0, clickedSong);
-            
-            // 4. Move our current position forward by 1 (to the newly inserted song)
-            currentIndex++; 
+            if (index > currentIndex) {
+                currentQueue.splice(currentIndex + 1, 0, clickedSong);
+                currentIndex++;
+            } else {
+                // If user clicks a past song, shift currentIndex so history remains intact
+                currentIndex--;
+                currentQueue.splice(currentIndex + 1, 0, clickedSong);
+                currentIndex++;
+            }
             
             loadAndPlay(null, currentIndex, false); 
         }
@@ -831,7 +837,6 @@
             checkLikedStatus(song);
             if (window.MusicControls) setupMediaSession(song);
             
-            // Update UI instantly so the selected song jumps to the top
             renderUpNextUI();
             
             if(fromUser) { 
@@ -839,7 +844,6 @@
                 setTimeout(() => { fetchSmartQueue(song); }, 500); 
             } 
             else { 
-                // Auto-fetch if we're getting close to the end of the queue
                 if(currentQueue.length - currentIndex < 5) setTimeout(() => { fetchSmartQueue(song); }, 500); 
             }
 
@@ -848,17 +852,28 @@
 
         window.togglePlay = () => { if (!audio.src) return; isPlaying ? audio.pause() : audio.play(); }
         
-        window.playNext = () => { 
+        // 🔥 FIX: INFINITE AUTO-PLAY AT THE END OF LIST 🔥
+        window.playNext = async () => { 
             if (currentIndex < currentQueue.length - 1) {
                 currentIndex++;
+                loadAndPlay(null, currentIndex, false); 
             } else { 
-                currentIndex = 0; 
+                // List is over, automatically fetch new songs and continue!
+                let btn = document.getElementById('load-more-btn');
+                if(btn) btn.innerHTML = `<span class="material-symbols-outlined animate-spin text-[18px]">sync</span> Loading Next...`;
+                
+                await fetchSmartQueue(currentQueue[currentIndex]);
+                
+                if (currentIndex < currentQueue.length - 1) {
+                    currentIndex++;
+                } else {
+                    currentIndex = 0; // Backup fallback
+                }
+                loadAndPlay(null, currentIndex, false); 
             } 
-            loadAndPlay(null, currentIndex, false); 
         }
         
         window.playPrevious = () => { 
-            // Flawless Previous logic goes backward in the unified queue exactly to what was played before
             currentIndex = (currentIndex - 1 + currentQueue.length) % currentQueue.length; 
             loadAndPlay(null, currentIndex, false); 
         }
