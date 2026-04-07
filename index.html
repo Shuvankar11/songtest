@@ -750,7 +750,6 @@
             renderUpNextUI(); 
         }
 
-        // 🔥 FIX: AUTO-SCROLL REMOVED 🔥
         function renderUpNextUI() {
             if(currentQueue.length > 0) {
                 let html = currentQueue.map((sq, i) => {
@@ -801,9 +800,24 @@
             loadAndPlay(null, currentIndex, false); 
         }
 
+        // 🔥 FIX: SMART VIBE RESET ON FRESH PLAY 🔥
         window.loadAndPlay = (queueContext, index, fromUser = false) => {
-            if (queueContext && queues[queueContext]) currentQueue = [...queues[queueContext]]; 
-            currentIndex = index; const song = currentQueue[currentIndex]; if(!song) return;
+            if (queueContext && queues[queueContext]) {
+                // Agar gaana Trending, Search ya Suggested se chalaya gaya hai
+                if (queueContext === 'trending' || queueContext === 'suggested' || queueContext === 'search') {
+                    currentQueue = [queues[queueContext][index]]; // Sirf wahi ek gaana lo
+                    currentIndex = 0; // Usi ko index 0 banao taaki koi fake history na dikhe
+                } else {
+                    // Agar Playlist, Liked Songs ya History hai, toh poori list ko normally behave karne do
+                    currentQueue = [...queues[queueContext]];
+                    currentIndex = index;
+                }
+            } else if (queueContext === null) {
+                currentIndex = index;
+            }
+
+            const song = currentQueue[currentIndex]; 
+            if(!song) return;
 
             document.getElementById('seek-slider').value = 0; document.getElementById('full-progress').style.width = '0%';
             document.getElementById('mini-progress').style.width = '0%'; document.getElementById('curr-time').innerText = '0:00'; document.getElementById('total-time').innerText = '0:00';
@@ -829,6 +843,7 @@
             
             if(fromUser) { 
                 localStorage.setItem('mid_last_artist', song.artist.split(',')[0]); 
+                // Ye line ab currentQueue empty hone ki wajah se fresh vibe queue fetch karegi!
                 setTimeout(() => { fetchSmartQueue(song); }, 500); 
             } 
             else { 
