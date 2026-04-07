@@ -750,7 +750,7 @@
             renderUpNextUI(); 
         }
 
-        // 🔥 FIX: RENDER WHOLE LIST (PAST SONGS DIMMED) & AUTO-SCROLL 🔥
+        // 🔥 FIX: AUTO-SCROLL REMOVED 🔥
         function renderUpNextUI() {
             if(currentQueue.length > 0) {
                 let html = currentQueue.map((sq, i) => {
@@ -758,7 +758,6 @@
                     let titleColor = isPlaying ? 'text-primary' : 'text-white';
                     let bgClass = isPlaying ? 'bg-white/5 border border-primary/20' : 'hover:bg-white/5 border border-transparent';
                     
-                    // Dim the past songs slightly
                     let opacityClass = i < currentIndex ? 'opacity-50' : 'opacity-100';
                     
                     return `
@@ -775,15 +774,6 @@
                     </button>
                 `;
                 queueList.innerHTML = html;
-
-                // Automatic scroll to the currently playing song smoothly
-                setTimeout(() => {
-                    let activeItem = document.getElementById('queue-item-' + currentIndex);
-                    if(activeItem) {
-                        activeItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    }
-                }, 100);
-
             } else { 
                 queueList.innerHTML = `<p class="text-xs text-on-surface-variant animate-pulse">Fetching more vibes...</p>`; 
             }
@@ -794,7 +784,6 @@
             await fetchSmartQueue(baseSong); 
         };
 
-        // 🔥 FIX: YT MUSIC STYLE QUEUE JUMP LOGIC 🔥
         window.playFromUpNext = (index) => { 
             if (index === currentIndex) return; 
             
@@ -804,7 +793,6 @@
                 currentQueue.splice(currentIndex + 1, 0, clickedSong);
                 currentIndex++;
             } else {
-                // If user clicks a past song, shift currentIndex so history remains intact
                 currentIndex--;
                 currentQueue.splice(currentIndex + 1, 0, clickedSong);
                 currentIndex++;
@@ -852,13 +840,11 @@
 
         window.togglePlay = () => { if (!audio.src) return; isPlaying ? audio.pause() : audio.play(); }
         
-        // 🔥 FIX: INFINITE AUTO-PLAY AT THE END OF LIST 🔥
         window.playNext = async () => { 
             if (currentIndex < currentQueue.length - 1) {
                 currentIndex++;
                 loadAndPlay(null, currentIndex, false); 
             } else { 
-                // List is over, automatically fetch new songs and continue!
                 let btn = document.getElementById('load-more-btn');
                 if(btn) btn.innerHTML = `<span class="material-symbols-outlined animate-spin text-[18px]">sync</span> Loading Next...`;
                 
@@ -867,7 +853,7 @@
                 if (currentIndex < currentQueue.length - 1) {
                     currentIndex++;
                 } else {
-                    currentIndex = 0; // Backup fallback
+                    currentIndex = 0;
                 }
                 loadAndPlay(null, currentIndex, false); 
             } 
