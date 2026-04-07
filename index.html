@@ -1,0 +1,975 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" name="viewport"/>
+    
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#0c0d18">
+    <link rel="apple-touch-icon" href="logo.png">
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('sw.js').catch(err => console.log('SW setup failed: ', err));
+            });
+        }
+    </script>
+    
+    <title>Midnight Vibes</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Manrope:wght@400;600;800&display=swap" rel="stylesheet"/>
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+    
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+
+    <script>
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        background: "#0c0d18", surface: "#171827", "surface-container": "#222438",
+                        primary: "#b5a4ff", secondary: "#ffb873", tertiary: "#ffb3b1"
+                    },
+                    fontFamily: { headline: ["Space Grotesk", "sans-serif"], body: ["Manrope", "sans-serif"] }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background-color: #0c0d18; color: #e3e3ff; font-family: "Manrope", sans-serif; overflow-x: hidden; -webkit-tap-highlight-color: transparent; overscroll-behavior-y: none; }
+        .material-symbols-outlined { font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24; }
+        .glass-panel { background: rgba(12, 13, 24, 0.95); backdrop-filter: blur(20px); border-top: 1px solid rgba(255,255,255,0.05); }
+        .glass-card { background: rgba(34, 36, 56, 0.4); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.05); }
+        ::-webkit-scrollbar { display: none; }
+        
+        #full-player { transition: transform 0.35s cubic-bezier(0.33, 1, 0.68, 1); transform: translateY(100%); z-index: 100; will-change: transform; }
+        #full-player.active { transform: translateY(0); }
+        
+        #canvas-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 0.5s; z-index: -1; pointer-events: none; }
+        #full-player.canvas-on #canvas-video { opacity: 0.3; }
+        
+        #search-results-container { display: none; }
+        #playlist-view, #auth-modal, #history-view { display: none; position: fixed; inset: 0; background: #0c0d18; z-index: 60; flex-direction: column; height: 100dvh; }
+        
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; position: absolute; top: -10px; z-index: 10; cursor: pointer; height: 25px; opacity: 0; }
+        input[type=range]:focus { outline: none; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 25px; width: 25px; border-radius: 50%; }
+        
+        .lang-btn { transition: all 0.3s ease; }
+        .input-field { width: 100%; background: #171827; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 10px 15px; color: white; margin-bottom: 12px; outline: none; font-size: 14px;}
+        .input-field:focus { border-color: #b5a4ff; }
+    </style>
+</head>
+<body class="pb-32 relative">
+
+    <nav class="sticky top-0 z-40 bg-[#0c0d18]/95 backdrop-blur-xl px-6 py-4 border-b border-white/5 flex flex-col gap-4 shadow-lg">
+        <div class="flex items-center justify-between">
+            <div class="text-2xl font-bold tracking-tighter text-primary font-headline">Midnight Vibes</div>
+            <div class="flex items-center gap-4">
+                <button onclick="openLikedSongs()" class="w-10 h-10 rounded-full glass-card flex items-center justify-center hover:bg-tertiary transition group border border-tertiary/30 shadow-[0_0_10px_rgba(255,179,177,0.2)]">
+                    <span class="material-symbols-outlined text-tertiary group-hover:text-black transition" style="font-variation-settings: 'FILL' 1;">favorite</span>
+                </button>
+                <div onclick="openAuthModal()" class="w-10 h-10 rounded-full bg-surface-container flex items-center justify-center border border-outline-variant/30 overflow-hidden cursor-pointer shadow-lg">
+                    <img id="nav-dp" src="" class="w-full h-full object-cover" style="display: none;">
+                    <span id="nav-default-dp" class="material-symbols-outlined text-lg">person</span>
+                </div>
+            </div>
+        </div>
+        <div class="relative w-full">
+            <span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant">search</span>
+            <input id="search-input" oninput="handleLiveSearch(this.value)" class="w-full bg-surface border border-outline-variant/30 rounded-full pl-12 pr-10 py-3 text-sm focus:ring-1 focus:ring-primary outline-none transition-all placeholder-on-surface-variant" placeholder="Artists, songs, or podcasts..."/>
+            <span id="clear-search" onclick="clearSearch()" class="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-on-surface-variant hidden cursor-pointer">close</span>
+        </div>
+    </nav>
+
+    <div id="auth-modal" class="overflow-y-auto px-6 py-10 z-50">
+        <div class="flex justify-between items-center mb-8">
+            <h2 id="auth-title" class="text-2xl font-bold font-headline text-primary">Account</h2>
+            <span onclick="closeAuthModal()" class="material-symbols-outlined text-2xl cursor-pointer text-white">close</span>
+        </div>
+
+        <div id="unauth-view" class="w-full max-w-md mx-auto">
+            <div class="flex gap-4 mb-6">
+                <button onclick="toggleAuthMode('login')" id="tab-login" class="flex-1 py-2 border-b-2 border-primary text-primary font-bold transition">Login</button>
+                <button onclick="toggleAuthMode('signup')" id="tab-signup" class="flex-1 py-2 border-b-2 border-transparent text-on-surface-variant font-bold transition">Sign Up</button>
+            </div>
+
+            <form id="login-form" class="space-y-4">
+                <input type="email" id="login-email" placeholder="Email Address" class="input-field" required>
+                <input type="password" id="login-pass" placeholder="Password" class="input-field" required>
+                <p onclick="forgotPassword()" class="text-xs text-secondary text-right cursor-pointer hover:underline mb-4">Forgot Password?</p>
+                <button type="submit" class="w-full bg-primary text-[#0c0d18] font-bold py-3 rounded-full hover:scale-[0.98] transition">Log In</button>
+            </form>
+
+            <form id="signup-form" class="space-y-4" style="display: none;">
+                <div class="flex flex-col items-center mb-4">
+                    <div class="w-20 h-20 rounded-full bg-surface flex items-center justify-center border border-dashed border-primary/50 relative overflow-hidden cursor-pointer">
+                        <img id="signup-dp-preview" src="" class="absolute inset-0 w-full h-full object-cover" style="display: none;">
+                        <span class="material-symbols-outlined text-on-surface-variant">add_a_photo</span>
+                        <input type="file" id="signup-dp" accept="image/*" class="absolute inset-0 opacity-0 cursor-pointer" onchange="previewDp(event)">
+                    </div>
+                    <p class="text-[10px] text-on-surface-variant mt-2">Upload DP (Optional)</p>
+                </div>
+                <input type="text" id="signup-name" placeholder="Full Name" class="input-field" required>
+                <select id="signup-gender" class="input-field" required>
+                    <option value="" disabled selected>Select Gender</option>
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                    <option value="Other">Other</option>
+                </select>
+                <input type="email" id="signup-email" placeholder="Email Address" class="input-field" required>
+                <input type="password" id="signup-pass" placeholder="Create Password" class="input-field" required>
+                <button type="submit" class="w-full bg-primary text-[#0c0d18] font-bold py-3 rounded-full hover:scale-[0.98] transition">Create Account</button>
+            </form>
+        </div>
+
+        <div id="auth-logged-in" class="w-full max-w-md mx-auto" style="display: none;">
+            <div class="flex flex-col items-center bg-surface-container/50 p-6 rounded-2xl border border-white/5 shadow-lg mb-6">
+                <div class="w-24 h-24 rounded-full bg-surface border-2 border-primary overflow-hidden mb-4 shadow-[0_0_15px_rgba(181,164,255,0.3)]">
+                    <img id="profile-dp" src="" onerror="this.src='logo.png'" class="w-full h-full object-cover">
+                </div>
+                <h3 id="profile-name" class="text-xl font-bold font-headline text-white">User Name</h3>
+                <p id="profile-email" class="text-sm text-on-surface-variant">user@email.com</p>
+                <span id="profile-gender" class="text-xs bg-surface px-3 py-1 rounded-full mt-2 text-primary border border-primary/20">Gender</span>
+            </div>
+
+            <div class="space-y-3">
+                <button onclick="openHistoryView()" class="w-full flex items-center justify-between glass-card p-4 rounded-xl hover:border-primary/50 transition">
+                    <div class="flex items-center gap-3"><span class="material-symbols-outlined text-primary">history</span> <span class="font-bold">Listening History</span></div>
+                    <span class="material-symbols-outlined text-on-surface-variant">chevron_right</span>
+                </button>
+                <button onclick="resetPasswordAuth()" class="w-full flex items-center justify-between glass-card p-4 rounded-xl hover:border-secondary/50 transition">
+                    <div class="flex items-center gap-3"><span class="material-symbols-outlined text-secondary">lock_reset</span> <span class="font-bold">Reset Password</span></div>
+                    <span class="material-symbols-outlined text-on-surface-variant">chevron_right</span>
+                </button>
+                <button onclick="logout()" class="w-full flex items-center justify-between glass-card p-4 rounded-xl hover:border-tertiary/50 transition">
+                    <div class="flex items-center gap-3"><span class="material-symbols-outlined text-tertiary">logout</span> <span class="font-bold">Sign Out</span></div>
+                </button>
+                <button onclick="deleteAccount()" class="w-full mt-6 bg-red-500/10 border border-red-500/30 text-red-400 font-bold py-3 rounded-xl hover:bg-red-500/20 transition">
+                    Delete Account
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="history-view">
+        <div class="px-6 py-5 border-b border-white/5 flex items-center gap-4 bg-[#0c0d18]/90 backdrop-blur-xl z-10 shrink-0">
+            <button onclick="closeHistoryView()" class="material-symbols-outlined text-on-surface-variant hover:text-white transition">arrow_back</button>
+            <h2 class="font-headline text-xl font-bold text-primary truncate">Listening History</h2>
+        </div>
+        <div class="flex-1 overflow-y-auto custom-scrollbar px-6 py-6 pb-32">
+            <div id="history-list" class="flex flex-col gap-3"></div>
+        </div>
+    </div>
+
+    <div id="search-results-container" class="px-6 mt-6 max-w-[1200px] mx-auto pb-10">
+        <h2 class="font-headline text-lg font-bold mb-4 text-primary">Top Results</h2>
+        <div id="live-search-grid" class="flex flex-col gap-3"></div>
+    </div>
+
+    <main id="main-dashboard" class="px-6 mt-6 max-w-[1200px] mx-auto space-y-10">
+        <section>
+            <h2 class="font-headline text-lg font-bold mb-4">Browse by Language</h2>
+            <div class="flex gap-3 overflow-x-auto pb-2 custom-scrollbar" id="lang-container">
+                <button onclick="setCategory(this, 'hindi')" class="lang-btn shrink-0 px-6 py-2.5 rounded-full bg-primary text-[#0c0d18] font-bold text-sm">Hindi</button>
+                <button onclick="setCategory(this, 'bengali')" class="lang-btn shrink-0 px-6 py-2.5 rounded-full bg-surface-container text-on-surface hover:text-primary transition text-sm font-bold border border-transparent hover:border-primary/50">Bengali</button>
+                <button onclick="setCategory(this, 'punjabi')" class="lang-btn shrink-0 px-6 py-2.5 rounded-full bg-surface-container text-on-surface hover:text-primary transition text-sm font-bold border border-transparent hover:border-primary/50">Punjabi</button>
+                <button onclick="setCategory(this, 'english')" class="lang-btn shrink-0 px-6 py-2.5 rounded-full bg-surface-container text-on-surface hover:text-primary transition text-sm font-bold border border-transparent hover:border-primary/50">English</button>
+            </div>
+        </section>
+
+        <section id="suggested-section" style="display: none;">
+            <h2 class="font-headline text-xl font-bold mb-4 flex items-center gap-2">
+                <span class="material-symbols-outlined text-tertiary">auto_awesome</span> Suggested for You
+            </h2>
+            <div id="suggested-grid" class="flex gap-4 overflow-x-auto pb-4 custom-scrollbar"></div>
+        </section>
+
+        <section>
+            <div class="flex items-center justify-between mb-4">
+                <h2 id="section-title" class="font-headline text-xl font-bold flex items-center gap-2">
+                    <span class="material-symbols-outlined text-primary">bolt</span> Trending Now
+                </h2>
+                <button onclick="refreshTrending()" class="flex items-center gap-1.5 text-xs font-bold text-on-surface-variant hover:text-primary hover:bg-surface-container transition px-3 py-1.5 rounded-full active:scale-95 border border-white/5">
+                    <span class="material-symbols-outlined text-[16px]">refresh</span> Refresh
+                </button>
+            </div>
+            <div id="trending-grid" class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div class="col-span-full py-10 flex justify-center"><span class="material-symbols-outlined animate-spin text-primary text-4xl">sync</span></div>
+            </div>
+        </section>
+
+        <section>
+            <h2 class="font-headline text-xl font-bold mb-4">Made For You</h2>
+            <div class="flex gap-4 overflow-x-auto pb-4 custom-scrollbar">
+                <div onclick="openPlaylistView('Midnight Lofi', 'lofi chill aesthetic')" class="glass-card p-3 rounded-2xl min-w-[140px] w-36 cursor-pointer shrink-0 border border-transparent hover:border-primary/50 transition group">
+                    <img src="https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?w=300&q=80" class="w-full aspect-square rounded-xl mb-2 object-cover group-hover:scale-105 transition duration-300">
+                    <h3 class="text-sm font-bold line-clamp-1">Midnight Lofi</h3>
+                </div>
+                <div onclick="openPlaylistView('Beast Mode', 'gym workout bass')" class="glass-card p-3 rounded-2xl min-w-[140px] w-36 cursor-pointer shrink-0 border border-transparent hover:border-primary/50 transition group">
+                    <img src="https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=300&q=80" class="w-full aspect-square rounded-xl mb-2 object-cover group-hover:scale-105 transition duration-300">
+                    <h3 class="text-sm font-bold line-clamp-1">Beast Mode</h3>
+                </div>
+                <div onclick="openPlaylistView('Desi Romance', 'bollywood romantic hits')" class="glass-card p-3 rounded-2xl min-w-[140px] w-36 cursor-pointer shrink-0 border border-transparent hover:border-primary/50 transition group">
+                    <img src="https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=300&q=80" class="w-full aspect-square rounded-xl mb-2 object-cover group-hover:scale-105 transition duration-300">
+                    <h3 class="text-sm font-bold line-clamp-1">Desi Romance</h3>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <div id="playlist-view">
+        <div class="px-6 py-5 border-b border-white/5 flex items-center gap-4 bg-[#0c0d18]/90 backdrop-blur-xl z-10 shrink-0">
+            <button onclick="closePlaylistView()" class="material-symbols-outlined text-on-surface-variant hover:text-white transition">arrow_back</button>
+            <h2 id="playlist-title" class="font-headline text-xl font-bold text-primary truncate">Playlist Name</h2>
+        </div>
+        <div class="flex-1 overflow-y-auto custom-scrollbar px-6 py-6 pb-32">
+            <div id="playlist-list" class="flex flex-col gap-3"></div>
+        </div>
+    </div>
+
+    <footer onclick="openFullPlayer()" class="fixed bottom-0 w-full glass-panel px-4 py-3 md:px-8 rounded-t-3xl shadow-[0_-10px_40px_rgba(0,0,0,0.6)] cursor-pointer hover:bg-surface/80 transition-colors z-40">
+        <div class="flex items-center justify-between gap-4">
+            <div class="flex items-center gap-3 w-[60%] overflow-hidden">
+                <div class="w-12 h-12 rounded-lg bg-surface-container shrink-0 border border-white/5 flex items-center justify-center overflow-hidden relative">
+                    <img id="mini-img" src="" onerror="this.onerror=null; this.style.display='none'" class="w-full h-full object-cover shadow-md absolute inset-0 z-10" style="display: none;"/>
+                    <span id="mini-placeholder" class="material-symbols-outlined text-on-surface-variant">music_note</span>
+                </div>
+                <div class="flex flex-col overflow-hidden">
+                    <h4 id="mini-title" class="font-headline text-on-surface font-bold text-sm line-clamp-1">Nothing playing</h4>
+                    <p id="mini-artist" class="font-body text-primary text-xs line-clamp-1">Select a track</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-3 flex-1 justify-end">
+                <div onclick="event.stopPropagation(); togglePlay()" class="w-12 h-12 rounded-full bg-primary flex items-center justify-center text-[#0c0d18] shadow-[0_0_15px_rgba(181,164,255,0.4)] active:scale-95 transition-transform shrink-0">
+                    <span id="mini-play-icon" class="material-symbols-outlined text-3xl" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
+                </div>
+            </div>
+        </div>
+        <div class="absolute bottom-0 left-0 right-0 h-1 bg-surface-container overflow-hidden">
+            <div id="mini-progress" class="h-full bg-gradient-to-r from-primary to-secondary w-0 transition-all duration-100 ease-linear"></div>
+        </div>
+    </footer>
+
+    <div id="full-player" class="fixed inset-0 bg-[#0c0d18] flex flex-col h-[100dvh] overflow-y-auto custom-scrollbar">
+        <video id="canvas-video" loop muted playsinline crossorigin="anonymous">
+            <source src="https://assets.mixkit.co/videos/preview/mixkit-abstract-technology-network-connection-lines-loop-27419-large.mp4" type="video/mp4">
+        </video>
+        <div class="absolute inset-0 bg-gradient-to-t from-[#0c0d18] via-[#0c0d18]/90 to-[#0c0d18]/60 z-[-1]"></div>
+
+        <div class="flex-1 flex flex-col pb-10">
+            <div id="player-swipe-area" class="w-full flex flex-col shrink-0" style="touch-action: none;">
+                <header class="flex justify-between items-center px-6 py-6 cursor-grab">
+                    <span onclick="closeFullPlayer()" class="material-symbols-outlined text-3xl text-white hover:text-primary transition">keyboard_arrow_down</span>
+                    <span class="text-xs uppercase font-bold tracking-widest text-on-surface-variant">Now Playing</span>
+                    <span class="material-symbols-outlined text-white">more_vert</span>
+                </header>
+                <div class="px-8 flex flex-col justify-center min-h-[300px] pointer-events-none mb-8">
+                    <img id="full-img" src="" onerror="this.onerror=null; this.src='logo.png'" class="w-full max-w-[340px] mx-auto aspect-square object-cover rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.6)] border border-white/5">
+                </div>
+            </div>
+
+            <div class="px-6 pb-6 shrink-0 mt-4">
+                <div class="flex justify-between items-center mb-6">
+                    <div class="overflow-hidden pr-4">
+                        <h2 id="full-title" class="text-3xl font-bold font-headline truncate text-white">Title</h2>
+                        <p id="full-artist" class="text-base text-secondary truncate mt-1">Artist</p>
+                    </div>
+                    <button onclick="toggleLike()" class="focus:outline-none shrink-0">
+                        <span id="like-icon" class="material-symbols-outlined text-3xl text-on-surface-variant hover:text-tertiary transition cursor-pointer">favorite</span>
+                    </button>
+                </div>
+
+                <div class="mb-6 relative h-4 flex items-center">
+                    <input type="range" id="seek-slider" min="0" max="100" value="0">
+                    <div class="w-full h-1.5 bg-surface-container rounded-full relative pointer-events-none">
+                        <div id="full-progress" class="h-full bg-gradient-to-r from-primary to-secondary rounded-full relative transition-all duration-75 ease-linear">
+                            <div class="absolute w-3 h-3 bg-white rounded-full right-0 top-1/2 transform -translate-y-1/2 translate-x-1/2 shadow-[0_0_10px_#fff]"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex justify-between text-xs font-mono text-on-surface-variant mt-[-10px] mb-6 px-1">
+                    <span id="curr-time">0:00</span><span id="total-time">0:00</span>
+                </div>
+
+                <div class="flex items-center justify-between px-2 mb-8">
+                    <span class="material-symbols-outlined text-2xl text-on-surface-variant">shuffle</span>
+                    <span onclick="playPrevious()" class="material-symbols-outlined text-5xl text-white hover:text-primary transition cursor-pointer" style="font-variation-settings: 'FILL' 1;">skip_previous</span>
+                    <button onclick="togglePlay()" class="w-20 h-20 bg-primary rounded-full flex items-center justify-center text-[#0c0d18] shadow-[0_0_30px_rgba(181,164,255,0.4)] active:scale-95 transition-transform">
+                        <span id="full-play-icon" class="material-symbols-outlined text-5xl" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
+                    </button>
+                    <span onclick="playNext()" class="material-symbols-outlined text-5xl text-white hover:text-primary transition cursor-pointer" style="font-variation-settings: 'FILL' 1;">skip_next</span>
+                    <span class="material-symbols-outlined text-on-surface-variant text-2xl">repeat</span>
+                </div>
+
+                <div class="flex items-center justify-between pb-8">
+                    <div class="flex gap-4 overflow-x-auto custom-scrollbar">
+                        <div onclick="toggleCanvas()" id="canvas-btn" class="flex items-center gap-2 px-4 py-2 rounded-full border border-outline-variant cursor-pointer transition shrink-0">
+                            <span class="material-symbols-outlined text-[18px] text-tertiary">movie</span>
+                            <span class="text-[10px] font-bold tracking-widest uppercase">Canvas FX</span>
+                        </div>
+                        
+                        <div onclick="toggleBass()" id="bass-btn" class="flex items-center gap-2 px-4 py-2 rounded-full border border-outline-variant cursor-pointer transition shrink-0">
+                            <span class="material-symbols-outlined text-[18px] text-on-surface-variant">speaker</span>
+                            <span class="text-[10px] font-bold tracking-widest uppercase">Bass Boost</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="px-6 shrink-0">
+                <div class="bg-surface-container/50 border border-white/5 rounded-2xl p-5 shadow-lg">
+                    <h3 class="font-headline font-bold text-lg mb-4 text-primary flex items-center gap-2">
+                        <span class="material-symbols-outlined">queue_music</span> Up Next (Vibe Match)
+                    </h3>
+                    <div id="queue-list" class="flex flex-col gap-3">
+                        <p class="text-sm text-on-surface-variant">Play a song to get smart suggestions.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <audio id="main-audio" crossorigin="anonymous"></audio>
+
+    <script>
+        // ==========================================
+        // 🔥 FIREBASE INITIALIZATION 🔥
+        // ==========================================
+        const firebaseConfig = {
+            apiKey: "AIzaSyCr88lb0doIqLsN4wObqUBIO5ILO84lg7Q",
+            authDomain: "midnight-vibes.firebaseapp.com",
+            databaseURL: "https://midnight-vibes-default-rtdb.firebaseio.com",
+            projectId: "midnight-vibes",
+            storageBucket: "midnight-vibes.firebasestorage.app",
+            messagingSenderId: "792420257574",
+            appId: "1:792420257574:web:1ceb9c6847fb0b523b3be7"
+        };
+        
+        if(Object.keys(firebaseConfig).length > 0) {
+            firebase.initializeApp(firebaseConfig);
+        }
+
+        const auth = window.firebase ? firebase.auth() : null;
+        const db = window.firebase ? firebase.firestore() : null;
+        let currentUser = null;
+        let globalHistory = [];
+
+        // ==========================================
+        // MUSIC PLAYER CORE
+        // ==========================================
+        const audio = document.getElementById('main-audio');
+        const seekSlider = document.getElementById('seek-slider');
+        const fullProgress = document.getElementById('full-progress');
+        const queueList = document.getElementById('queue-list');
+        const playlistView = document.getElementById('playlist-view');
+        const playlistList = document.getElementById('playlist-list');
+        
+        const queues = { trending: [], suggested: [], playlist: [], search: [], liked: [], history: [] };
+        let currentQueue = [], upNextQueue = [], currentIndex = 0;
+        let isPlaying = false, canvasOn = false, isSeeking = false;
+        let searchTimeout;
+        let currentFetchId = 0; 
+        const fallbackImg = "logo.png";
+        let tempBase64Dp = "";
+
+        // ==========================================
+        // 🔥 BASS BOOST SYSTEM 🔥
+        // ==========================================
+        let audioCtx, bassFilter, sourceNode;
+        let isBassBoosted = false;
+
+        window.toggleBass = () => {
+            try {
+                if (!audioCtx) {
+                    const AudioContext = window.AudioContext || window.webkitAudioContext;
+                    audioCtx = new AudioContext();
+                    sourceNode = audioCtx.createMediaElementSource(audio);
+                    
+                    bassFilter = audioCtx.createBiquadFilter();
+                    bassFilter.type = "lowshelf";
+                    bassFilter.frequency.value = 80;
+                    bassFilter.gain.value = 0;
+
+                    sourceNode.connect(bassFilter);
+                    bassFilter.connect(audioCtx.destination);
+                }
+
+                if (audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+
+                isBassBoosted = !isBassBoosted;
+                bassFilter.gain.value = isBassBoosted ? 8 : 0;
+
+                const btn = document.getElementById('bass-btn');
+                const icon = btn.querySelector('.material-symbols-outlined');
+                
+                if (isBassBoosted) {
+                    btn.classList.add('border-primary');
+                    icon.classList.add('text-primary');
+                    icon.classList.remove('text-on-surface-variant');
+                } else {
+                    btn.classList.remove('border-primary');
+                    icon.classList.remove('text-primary');
+                    icon.classList.add('text-on-surface-variant');
+                }
+            } catch (e) {
+                console.log("Bass Boost Error:", e);
+            }
+        };
+
+        // ==========================================
+        // AUTH & DATABASE LOGIC
+        // ==========================================
+        if(auth) {
+            auth.onAuthStateChanged(user => {
+                currentUser = user;
+                if(user) {
+                    db.collection('users').doc(user.uid).get().then(doc => {
+                        if(doc.exists) {
+                            const data = doc.data();
+                            document.getElementById('nav-default-dp').style.display = 'none';
+                            const navDp = document.getElementById('nav-dp');
+                            navDp.style.display = 'block';
+                            navDp.src = data.dp || fallbackImg;
+                            
+                            document.getElementById('profile-name').innerText = data.name;
+                            document.getElementById('profile-email').innerText = data.email;
+                            document.getElementById('profile-gender').innerText = data.gender;
+                            document.getElementById('profile-dp').src = data.dp || fallbackImg;
+
+                            if(data.likes) { saveLikedSongs(data.likes); queues.liked = data.likes; }
+                            if(data.history) { globalHistory = data.history; }
+                            
+                            if(data.lastPlayed && audio.src === '') restoreLastPlayedUI(data.lastPlayed);
+                        }
+                    });
+                } else {
+                    document.getElementById('nav-default-dp').style.display = 'block';
+                    document.getElementById('nav-dp').style.display = 'none';
+                    const lastLocal = localStorage.getItem('mid_last_song');
+                    if(lastLocal && audio.src === '') restoreLastPlayedUI(JSON.parse(lastLocal));
+                }
+            });
+        } else {
+            const lastLocal = localStorage.getItem('mid_last_song');
+            if(lastLocal) restoreLastPlayedUI(JSON.parse(lastLocal));
+        }
+
+        function restoreLastPlayedUI(song) {
+            currentQueue = [song]; currentIndex = 0;
+            
+            document.getElementById('mini-title').innerText = song.name;
+            document.getElementById('mini-artist').innerText = song.artist;
+            const mImg = document.getElementById('mini-img');
+            mImg.style.display = 'block'; 
+            mImg.src = song.img || fallbackImg;
+            document.getElementById('mini-placeholder').style.display = 'none';
+            
+            document.getElementById('full-title').innerText = song.name;
+            document.getElementById('full-artist').innerText = song.artist;
+            document.getElementById('full-img').src = song.img || fallbackImg;
+            
+            audio.src = song.url;
+            checkLikedStatus(song);
+
+            setTimeout(() => { fetchSmartQueue(song, false); }, 500);
+        }
+
+        window.addEventListener('popstate', (e) => {
+            document.getElementById('full-player').classList.remove('active');
+            document.getElementById('full-player').style.transform = '';
+            document.getElementById('auth-modal').style.display = 'none';
+            document.getElementById('playlist-view').style.display = 'none';
+            document.getElementById('history-view').style.display = 'none';
+
+            if(e.state && e.state.overlay) {
+                if(e.state.overlay === 'player') document.getElementById('full-player').classList.add('active');
+                else if(e.state.overlay === 'auth') document.getElementById('auth-modal').style.display = 'flex';
+                else if(e.state.overlay === 'playlist') document.getElementById('playlist-view').style.display = 'flex';
+                else if(e.state.overlay === 'history') document.getElementById('history-view').style.display = 'flex';
+            }
+        });
+
+        window.openAuthModal = () => {
+            const modal = document.getElementById('auth-modal');
+            modal.style.display = 'flex';
+            history.pushState({overlay: 'auth'}, null, '#auth'); 
+            if(currentUser) {
+                document.getElementById('unauth-view').style.display = 'none'; document.getElementById('auth-logged-in').style.display = 'block';
+            } else {
+                document.getElementById('unauth-view').style.display = 'block'; document.getElementById('auth-logged-in').style.display = 'none';
+            }
+        };
+        window.closeAuthModal = () => { document.getElementById('auth-modal').style.display = 'none'; if(location.hash === '#auth') history.back(); };
+
+        window.toggleAuthMode = (mode) => {
+            if(mode === 'login') {
+                document.getElementById('login-form').style.display = 'block'; document.getElementById('signup-form').style.display = 'none';
+                document.getElementById('tab-login').classList.replace('border-transparent', 'border-primary'); document.getElementById('tab-login').classList.replace('text-on-surface-variant', 'text-primary');
+                document.getElementById('tab-signup').classList.replace('border-primary', 'border-transparent'); document.getElementById('tab-signup').classList.replace('text-primary', 'text-on-surface-variant');
+            } else {
+                document.getElementById('login-form').style.display = 'none'; document.getElementById('signup-form').style.display = 'block';
+                document.getElementById('tab-signup').classList.replace('border-transparent', 'border-primary'); document.getElementById('tab-signup').classList.replace('text-on-surface-variant', 'text-primary');
+                document.getElementById('tab-login').classList.replace('border-primary', 'border-transparent'); document.getElementById('tab-login').classList.replace('text-primary', 'text-on-surface-variant');
+            }
+        };
+
+        window.previewDp = (event) => {
+            const file = event.target.files[0];
+            if(file) {
+                const reader = new FileReader();
+                reader.onload = (e) => { tempBase64Dp = e.target.result; document.getElementById('signup-dp-preview').src = tempBase64Dp; document.getElementById('signup-dp-preview').style.display = 'block'; };
+                reader.readAsDataURL(file);
+            }
+        };
+
+        document.getElementById('signup-form').addEventListener('submit', async (e) => {
+            e.preventDefault(); if(!auth) return;
+            const email = document.getElementById('signup-email').value; const pass = document.getElementById('signup-pass').value; const name = document.getElementById('signup-name').value; const gender = document.getElementById('signup-gender').value;
+            try {
+                const cred = await auth.createUserWithEmailAndPassword(email, pass);
+                await db.collection('users').doc(cred.user.uid).set({ name: name, email: email, gender: gender, dp: tempBase64Dp, likes: [], history: [], lastPlayed: null });
+                closeAuthModal(); alert("Account created successfully!");
+            } catch(error) { alert(error.message); }
+        });
+
+        document.getElementById('login-form').addEventListener('submit', async (e) => {
+            e.preventDefault(); if(!auth) return;
+            const email = document.getElementById('login-email').value; const pass = document.getElementById('login-pass').value;
+            try { await auth.signInWithEmailAndPassword(email, pass); closeAuthModal(); } catch(error) { alert(error.message); }
+        });
+
+        window.logout = () => { auth.signOut(); closeAuthModal(); };
+        window.forgotPassword = () => { const email = document.getElementById('login-email').value; if(!email) return alert("Please enter your email first."); auth.sendPasswordResetEmail(email).then(() => alert("Reset link sent!")).catch(e => alert(e.message)); };
+        window.deleteAccount = () => { if(confirm("Are you sure you want to delete your account?")) { db.collection('users').doc(currentUser.uid).delete().then(() => { currentUser.delete().then(() => closeAuthModal()); }); } };
+
+        window.openHistoryView = () => {
+            document.getElementById('auth-modal').style.display = 'none'; document.getElementById('history-view').style.display = 'flex'; history.pushState({overlay: 'history'}, null, '#history'); 
+            const hList = document.getElementById('history-list'); queues.history = [...globalHistory].reverse();
+            if(queues.history.length === 0) { hList.innerHTML = `<p class="text-center text-on-surface-variant py-10">No listening history found.</p>`; return; }
+            hList.innerHTML = queues.history.map((s, i) => `
+                <div onclick="loadAndPlay('history', ${i}, false)" class="flex items-center gap-4 glass-card p-3 rounded-xl cursor-pointer hover:bg-white/5 transition border border-transparent">
+                    <img src="${s.img}" onerror="this.onerror=null; this.src='${fallbackImg}'" class="w-14 h-14 rounded-lg object-cover">
+                    <div class="flex-1 overflow-hidden"><h4 class="text-sm font-bold truncate text-white">${s.name}</h4><p class="text-xs text-on-surface-variant truncate">${s.artist}</p></div>
+                    <span class="material-symbols-outlined text-primary">play_arrow</span>
+                </div>
+            `).join('');
+        };
+        window.closeHistoryView = () => { document.getElementById('history-view').style.display = 'none'; if(location.hash === '#history') history.back(); };
+
+        // ==========================================
+        // API FETCH & DASHBOARD
+        // ==========================================
+        const categoryQueries = {
+            'hindi': ['latest bollywood hits', 'top hindi romantic', '90s evergreen hindi', 'hindi party anthem'],
+            'bengali': ['latest bengali hits', 'bengali romantic songs', 'rabindra sangeet classic'],
+            'punjabi': ['latest punjabi pop', 'punjabi bhangra party', 'diljit dosanjh hits'],
+            'english': ['billboard hot 100', 'latest english pop', 'classic rock 80s']
+        };
+        let currentCategory = 'hindi';
+
+        function decode(str) { let txt = document.createElement('textarea'); txt.innerHTML = str || ''; return txt.value; }
+
+        function renderGrid(songs, targetId, queueName) {
+            const grid = document.getElementById(targetId);
+            grid.innerHTML = songs.slice(0, 16).map((s, i) => `
+                <div onclick="loadAndPlay('${queueName}', ${i}, true)" class="glass-card p-3 rounded-2xl cursor-pointer hover:border-primary/50 transition-all duration-300 group border border-transparent hover:border-primary/20">
+                    <div class="relative w-full aspect-square mb-3 overflow-hidden rounded-xl">
+                        <img src="${s.img}" onerror="this.onerror=null; this.src='${fallbackImg}'" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500">
+                        <div class="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                            <div class="w-12 h-12 bg-primary rounded-full flex items-center justify-center shadow-[0_0_15px_rgba(181,164,255,0.6)]">
+                                <span class="material-symbols-outlined text-[#0c0d18] text-3xl" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
+                            </div>
+                        </div>
+                    </div>
+                    <h3 class="font-headline font-bold text-sm line-clamp-1 text-white">${s.name}</h3><p class="font-body text-[11px] text-on-surface-variant truncate mt-0.5">${s.artist}</p>
+                </div>
+            `).join('');
+        }
+
+        window.onload = () => { loadInitialDashboard(); loadSuggestedSection(); };
+
+        async function loadInitialDashboard() {
+            document.getElementById('trending-grid').innerHTML = `<div class="col-span-full py-10 flex justify-center"><span class="material-symbols-outlined animate-spin text-primary text-4xl">sync</span></div>`;
+            fetchAPI('top hindi songs', 30).then(songs => { if(songs.length > 0) { queues.trending = songs; renderGrid(queues.trending, 'trending-grid', 'trending'); } });
+        }
+
+        async function fetchAPI(query, limit = 40) {
+            let q = query.replace(/original/gi, '').trim(); if(!q) return [];
+            const apis = [ `https://saavn.me/search/songs?query=${encodeURIComponent(q)}&limit=${limit}`, `https://saavn.dev/api/search/songs?query=${encodeURIComponent(q)}&limit=${limit}`, `https://jiosaavn-api-privatecvc2.vercel.app/search/songs?query=${encodeURIComponent(q)}&limit=${limit}` ];
+            for (let url of apis) {
+                try {
+                    const res = await fetch(url); if (!res.ok) continue; const json = await res.json(); let results = json.data?.results || json.data || json.results;
+                    if (results && results.length > 0) {
+                        let rawSongs = results.map(s => {
+                            let img = s.image && Array.isArray(s.image) ? s.image[s.image.length-1]?.url || s.image[s.image.length-1]?.link : fallbackImg; if(typeof s.image === 'string') img = s.image;
+                            let mediaUrl = s.downloadUrl && Array.isArray(s.downloadUrl) ? s.downloadUrl[s.downloadUrl.length-1]?.url || s.downloadUrl[s.downloadUrl.length-1]?.link : s.media_url || s.url;
+                            return {
+                                name: decode(s.name || s.title || 'Unknown'), artist: decode(s.artists?.primary?.[0]?.name || s.primaryArtists || 'Artist'),
+                                img: (img || fallbackImg).replace('http://', 'https://').replace('150x150', '500x500'), url: (mediaUrl || '').replace('http://', 'https://'), language: (s.language || '').toLowerCase() 
+                            };
+                        }).filter(s => s.url);
+                        let uniqueSongs = []; let names = new Set();
+                        for(let s of rawSongs) { let baseName = s.name.toLowerCase().replace(/\[.*?\]|\(.*?\)/g, "").split('-')[0].trim(); if(!names.has(baseName)) { names.add(baseName); uniqueSongs.push(s); } }
+                        if(uniqueSongs.length > 0) return uniqueSongs.sort(() => Math.random() - 0.5); 
+                    }
+                } catch(e) {}
+            }
+            return [];
+        }
+
+        async function fetchSection(query, targetId) {
+            let myFetchId = ++currentFetchId; const grid = document.getElementById(targetId);
+            grid.innerHTML = `<div class="col-span-full py-10 flex justify-center"><span class="material-symbols-outlined animate-spin text-primary text-4xl">sync</span></div>`;
+            const songs = await fetchAPI(query, 30);
+            if (myFetchId !== currentFetchId) return; 
+            if(songs.length > 0) { queues.trending = songs; renderGrid(queues.trending, targetId, 'trending'); } 
+        }
+
+        window.setCategory = (btn, cat) => {
+            currentCategory = cat; document.querySelectorAll('.lang-btn').forEach(b => { b.classList.remove('bg-primary', 'text-[#0c0d18]'); b.classList.add('bg-surface-container', 'text-on-surface'); });
+            btn.classList.remove('bg-surface-container', 'text-on-surface'); btn.classList.add('bg-primary', 'text-[#0c0d18]'); refreshTrending();
+        }
+        window.refreshTrending = () => { fetchSection(categoryQueries[currentCategory][Math.floor(Math.random() * categoryQueries[currentCategory].length)], 'trending-grid'); }
+
+        async function loadSuggestedSection() {
+            const lastArtist = localStorage.getItem('mid_last_artist');
+            if (lastArtist && lastArtist !== 'Unknown' && lastArtist !== 'Artist') {
+                const songs = await fetchAPI(lastArtist + " hits", 15);
+                if (songs.length > 0) {
+                    document.getElementById('suggested-section').style.display = 'block'; queues.suggested = songs; 
+                    document.getElementById('suggested-grid').innerHTML = queues.suggested.slice(0, 6).map((s, i) => `
+                        <div onclick="loadAndPlay('suggested', ${i}, true)" class="w-36 min-w-[144px] glass-card p-3 rounded-2xl cursor-pointer hover:border-tertiary/30 transition shrink-0 group">
+                            <img src="${s.img}" onerror="this.onerror=null; this.src='${fallbackImg}'" class="w-full aspect-square rounded-xl object-cover mb-2 group-hover:scale-105 transition-transform">
+                            <h4 class="font-headline font-bold text-sm text-white truncate">${s.name}</h4><p class="font-body text-[10px] text-on-surface-variant truncate">${s.artist}</p>
+                        </div>
+                    `).join('');
+                }
+            }
+        }
+
+        async function openPlaylistView(title, query) {
+            document.getElementById('playlist-title').innerText = title; playlistView.style.display = 'flex'; history.pushState({overlay: 'playlist'}, null, '#playlist'); 
+            playlistList.innerHTML = `<p class="text-center text-primary animate-pulse py-10">Loading Playlist...</p>`; const songs = await fetchAPI(query, 30);
+            if(songs.length > 0) {
+                queues.playlist = songs;
+                playlistList.innerHTML = queues.playlist.map((s, i) => `
+                    <div onclick="loadAndPlay('playlist', ${i}, false)" class="flex items-center gap-4 glass-card p-3 rounded-xl cursor-pointer hover:bg-white/5 transition border border-transparent hover:border-primary/30">
+                        <img src="${s.img}" onerror="this.onerror=null; this.src='${fallbackImg}'" class="w-14 h-14 rounded-lg object-cover">
+                        <div class="flex-1 overflow-hidden"><h4 class="text-sm font-bold truncate text-white">${s.name}</h4><p class="text-xs text-on-surface-variant truncate mt-0.5">${s.artist}</p></div>
+                        <span class="material-symbols-outlined text-primary">play_arrow</span>
+                    </div>
+                `).join('');
+            }
+        }
+        window.closePlaylistView = () => { playlistView.style.display = 'none'; if(location.hash === '#playlist') history.back(); }
+
+        function getLikedSongs() { return JSON.parse(localStorage.getItem('mid_liked')) || []; }
+        function saveLikedSongs(songs) { localStorage.setItem('mid_liked', JSON.stringify(songs)); if(currentUser && db) { db.collection('users').doc(currentUser.uid).update({ likes: songs }); } }
+
+        window.openLikedSongs = () => {
+            const liked = getLikedSongs(); document.getElementById('playlist-title').innerText = "❤️ Your Liked Songs"; playlistView.style.display = 'flex'; history.pushState({overlay: 'playlist'}, null, '#playlist'); 
+            if(liked.length === 0) { playlistList.innerHTML = `<p class="text-center text-on-surface-variant py-10">No liked songs.</p>`; return; }
+            queues.liked = liked; 
+            playlistList.innerHTML = queues.liked.map((s, i) => `
+                <div onclick="loadAndPlay('liked', ${i}, false)" class="flex items-center gap-4 glass-card p-3 rounded-xl cursor-pointer hover:bg-white/5 transition border border-transparent hover:border-tertiary/30">
+                    <img src="${s.img}" onerror="this.onerror=null; this.src='${fallbackImg}'" class="w-14 h-14 rounded-lg object-cover">
+                    <div class="flex-1 overflow-hidden"><h4 class="text-sm font-bold truncate text-white">${s.name}</h4><p class="text-xs text-tertiary truncate mt-0.5">Liked</p></div>
+                    <span class="material-symbols-outlined text-tertiary">play_arrow</span>
+                </div>
+            `).join('');
+        };
+
+        window.toggleLike = () => {
+            if(!currentQueue[currentIndex]) return; const song = currentQueue[currentIndex]; let liked = getLikedSongs(); const exists = liked.findIndex(s => s.url === song.url);
+            if(exists > -1) liked.splice(exists, 1); else liked.unshift(song); saveLikedSongs(liked); checkLikedStatus(song);
+        };
+        function checkLikedStatus(song) {
+            if(!song) return; const liked = getLikedSongs().some(s => s.url === song.url); const icon = document.getElementById('like-icon'); icon.innerText = 'favorite';
+            if(liked) { icon.classList.add('text-tertiary'); icon.style.fontVariationSettings = "'FILL' 1"; } else { icon.classList.remove('text-tertiary'); icon.style.fontVariationSettings = "'FILL' 0"; }
+        }
+
+        window.handleLiveSearch = (val) => {
+            const clearBtn = document.getElementById('clear-search'); const container = document.getElementById('search-results-container'); const dash = document.getElementById('main-dashboard');
+            clearBtn.style.display = val.trim() ? 'block' : 'none'; if(!val.trim()) { container.style.display = 'none'; dash.style.display = 'block'; return; }
+            container.style.display = 'block'; dash.style.display = 'none'; document.getElementById('live-search-grid').innerHTML = `<p class="text-center text-primary animate-pulse py-10">Searching...</p>`;
+            clearTimeout(searchTimeout); searchTimeout = setTimeout(async () => {
+                const songs = await fetchAPI(val, 20); const rGrid = document.getElementById('live-search-grid');
+                if(songs.length > 0) {
+                    queues.search = songs; 
+                    rGrid.innerHTML = queues.search.map((s, i) => `
+                        <div onclick="loadAndPlay('search', ${i}, true)" class="flex items-center gap-4 glass-card p-3 rounded-xl cursor-pointer hover:bg-white/5 transition">
+                            <img src="${s.img}" onerror="this.onerror=null; this.src='${fallbackImg}'" class="w-14 h-14 rounded-lg object-cover shadow-md shrink-0">
+                            <div class="flex-1 overflow-hidden"><h4 class="text-sm font-bold truncate text-white">${s.name}</h4><p class="text-xs text-on-surface-variant truncate">${s.artist}</p></div>
+                            <span class="material-symbols-outlined text-primary">play_arrow</span>
+                        </div>
+                    `).join('');
+                } else { rGrid.innerHTML = `<p class="text-center text-on-surface-variant py-10">No songs found.</p>`; }
+            }, 600); 
+        }
+        window.clearSearch = () => { document.getElementById('search-input').value = ''; handleLiveSearch(''); }
+
+        // 🔥 MODIFIED: LOAD MORE AND SMART QUEUE SYSTEM 🔥
+        async function fetchSmartQueue(song, append = false) {
+            if(!append) queueList.innerHTML = `<p class="text-xs text-primary animate-pulse">Analyzing vibe...</p>`;
+            
+            let lang = (song.language && song.language !== 'unknown') ? song.language : currentCategory;
+            let artist = song.artist ? song.artist.split(',')[0].trim() : '';
+            
+            // Primary fetch based on vibe
+            let query = artist ? (artist + " " + lang + " hits") : (`top ${lang} songs`);
+            let songs = await fetchAPI(query, 30);
+            
+            // Fallback if API returns empty
+            if (songs.length === 0) {
+                songs = await fetchAPI(`top trending ${lang} songs`, 30);
+            }
+
+            if (songs.length > 0) {
+                let newSongs = songs.filter(s => s.name.toLowerCase().trim() !== song.name.toLowerCase().trim());
+                
+                if(append) { 
+                    // Remove duplicates that are already in upNextQueue or currently playing
+                    newSongs = newSongs.filter(ns => !upNextQueue.some(uq => uq.url === ns.url) && !currentQueue.some(cq => cq.url === ns.url)); 
+                    
+                    // If everything was a duplicate, get some random fresh hits
+                    if (newSongs.length === 0) {
+                        let randomFallback = await fetchAPI(`latest ${lang} hits`, 20);
+                        newSongs = randomFallback.filter(ns => !upNextQueue.some(uq => uq.url === ns.url) && !currentQueue.some(cq => cq.url === ns.url));
+                    }
+                    
+                    upNextQueue.push(...newSongs); 
+                } else { 
+                    upNextQueue = newSongs; 
+                }
+                renderUpNextUI();
+            } else if (append) {
+                // If totally empty, just refresh UI to stop loading state
+                renderUpNextUI();
+            }
+        }
+
+        function renderUpNextUI() {
+            if(upNextQueue.length > 0) {
+                // Map the complete upNextQueue without slicing
+                let html = upNextQueue.map((sq, i) => `
+                    <div onclick="playFromUpNext(${i})" class="flex items-center gap-3 p-2 rounded-xl cursor-pointer hover:bg-white/5 transition">
+                        <img src="${sq.img}" onerror="this.onerror=null; this.src='${fallbackImg}'" class="w-12 h-12 rounded-lg object-cover shadow-md shrink-0"/>
+                        <div class="overflow-hidden"><h4 class="text-sm font-bold text-white truncate">${sq.name}</h4><p class="text-xs text-on-surface-variant truncate">${sq.artist}</p></div>
+                    </div>`).join('');
+                
+                // Add "Load More" Button at the bottom
+                html += `
+                    <button id="load-more-btn" onclick="loadMoreUpNext()" class="w-full py-3 mt-2 rounded-xl border border-white/5 bg-white/5 text-xs font-bold text-on-surface-variant hover:bg-white/10 hover:text-white transition flex items-center justify-center gap-2">
+                        <span class="material-symbols-outlined text-[18px]">expand_more</span> Load More
+                    </button>
+                `;
+                
+                queueList.innerHTML = html;
+            } else { 
+                queueList.innerHTML = `<p class="text-xs text-on-surface-variant animate-pulse">Fetching more vibes...</p>`; 
+            }
+        }
+
+        window.loadMoreUpNext = async () => {
+            const btn = document.getElementById('load-more-btn');
+            if(btn) {
+                btn.innerHTML = `<span class="material-symbols-outlined animate-spin text-[18px]">sync</span> Fetching...`;
+                btn.onclick = null; // Prevent double click
+            }
+            
+            let baseSong = currentQueue[currentIndex];
+            if (upNextQueue.length > 0) {
+                // Pick a random song from the recently added vibe to evolve it smoothly
+                let startIndex = Math.max(0, upNextQueue.length - 10);
+                let randomIndex = startIndex + Math.floor(Math.random() * (upNextQueue.length - startIndex));
+                baseSong = upNextQueue[randomIndex] || baseSong;
+            }
+            
+            await fetchSmartQueue(baseSong, true); 
+        };
+
+        window.playFromUpNext = (index) => { 
+            const song = upNextQueue[index]; 
+            currentQueue.splice(currentIndex + 1, 0, song); 
+            currentIndex++; 
+            loadAndPlay(null, currentIndex, false); 
+        }
+
+        window.loadAndPlay = (queueContext, index, fromUser = false) => {
+            if (queueContext && queues[queueContext]) currentQueue = [...queues[queueContext]]; 
+            currentIndex = index; const song = currentQueue[currentIndex]; if(!song) return;
+
+            document.getElementById('seek-slider').value = 0; document.getElementById('full-progress').style.width = '0%';
+            document.getElementById('mini-progress').style.width = '0%'; document.getElementById('curr-time').innerText = '0:00'; document.getElementById('total-time').innerText = '0:00';
+            document.getElementById('mini-title').innerText = document.getElementById('full-title').innerText = song.name;
+            document.getElementById('mini-artist').innerText = document.getElementById('full-artist').innerText = song.artist;
+            const mImg = document.getElementById('mini-img'); mImg.style.display = 'block'; mImg.src = document.getElementById('full-img').src = song.img || fallbackImg;
+            document.getElementById('mini-placeholder').style.display = 'none';
+
+            localStorage.setItem('mid_last_song', JSON.stringify(song));
+            if(currentUser && db && window.firebase) {
+                const uniqueHistory = globalHistory.filter(s => s.url !== song.url); uniqueHistory.push(song); if(uniqueHistory.length > 50) uniqueHistory.shift(); 
+                globalHistory = uniqueHistory; db.collection('users').doc(currentUser.uid).update({ lastPlayed: song, history: globalHistory });
+            }
+
+            audio.src = song.url;
+            const playPromise = audio.play();
+            if (playPromise !== undefined) { playPromise.then(_ => { isPlaying = true; updatePlayIcons(); }).catch(e => { isPlaying = false; updatePlayIcons(); }); }
+
+            checkLikedStatus(song);
+            
+            if (window.MusicControls) setupMediaSession(song);
+            
+            if(fromUser) { localStorage.setItem('mid_last_artist', song.artist.split(',')[0]); setTimeout(() => { fetchSmartQueue(song, false); }, 500); } 
+            else { renderUpNextUI(); if(upNextQueue.length < 5) setTimeout(() => { fetchSmartQueue(song, true); }, 500); }
+
+            if(canvasOn) document.getElementById('canvas-video').play();
+        };
+
+        window.togglePlay = () => { if (!audio.src) return; isPlaying ? audio.pause() : audio.play(); }
+        
+        window.playNext = () => { 
+            if (currentIndex < currentQueue.length - 1) {
+                currentIndex++;
+            } else if(upNextQueue.length > 0) { 
+                let upIndex = upNextQueue.findIndex(s => s.url === currentQueue[currentIndex].url);
+                let nextIndex = (upIndex !== -1 && upIndex < upNextQueue.length - 1) ? upIndex + 1 : 0;
+                currentQueue.push(upNextQueue[nextIndex]);
+                currentIndex++; 
+            } else { 
+                currentIndex = 0; 
+            } 
+            loadAndPlay(null, currentIndex, false); 
+        }
+        
+        window.playPrevious = () => { currentIndex = (currentIndex - 1 + currentQueue.length) % currentQueue.length; loadAndPlay(null, currentIndex, false); }
+
+        function updatePlayIcons() { 
+            document.getElementById('mini-play-icon').innerText = isPlaying ? 'pause' : 'play_arrow'; 
+            document.getElementById('full-play-icon').innerText = isPlaying ? 'pause' : 'play_arrow'; 
+            if (window.MusicControls) window.MusicControls.updateIsPlaying(isPlaying);
+        }
+
+        // ==========================================
+        // 🔥 AUDIO TIME UPDATE & SEEKING 🔥
+        // ==========================================
+        function updateOSPlayerPosition() {
+            if (!audio.duration || isNaN(audio.duration) || audio.duration === Infinity) return;
+            if ('mediaSession' in navigator) {
+                try {
+                    navigator.mediaSession.setPositionState({
+                        duration: audio.duration, playbackRate: audio.playbackRate || 1, position: audio.currentTime
+                    });
+                } catch (e) {}
+            }
+        }
+
+        audio.addEventListener('loadedmetadata', () => { 
+            document.getElementById('total-time').innerText = formatTime(audio.duration); 
+            if ('mediaSession' in navigator && !window.MusicControls) setupMediaSession(currentQueue[currentIndex]);
+            updateOSPlayerPosition(); 
+        });
+        
+        audio.addEventListener('canplay', () => { document.getElementById('total-time').innerText = formatTime(audio.duration); });
+        audio.onplaying = () => { isPlaying = true; updatePlayIcons(); updateOSPlayerPosition(); }; 
+        audio.onpause = () => { isPlaying = false; updatePlayIcons(); updateOSPlayerPosition(); };
+        
+        seekSlider.addEventListener('input', (e) => { isSeeking = true; fullProgress.style.width = `${e.target.value}%`; });
+        seekSlider.addEventListener('change', (e) => { 
+            if(audio.duration) audio.currentTime = (e.target.value / 100) * audio.duration; 
+            isSeeking = false; 
+            updateOSPlayerPosition();
+        });
+        
+        audio.addEventListener('timeupdate', () => {
+            if(audio.duration && !isNaN(audio.duration)) {
+                const pctTime = (audio.currentTime / audio.duration) * 100;
+                if(!isSeeking) { seekSlider.value = pctTime; fullProgress.style.width = `${pctTime}%`; }
+                document.getElementById('mini-progress').style.width = `${pctTime}%`;
+                document.getElementById('curr-time').innerText = formatTime(audio.currentTime);
+            }
+        });
+        
+        audio.addEventListener('ended', playNext);
+        function formatTime(s) { if(isNaN(s)) return "0:00"; let m = Math.floor(s/60), sec = Math.floor(s%60); return `${m}:${sec < 10 ? '0'+sec : sec}`; }
+
+        // ==========================================
+        // 🔥 NATIVE & WEB MEDIA SESSION 🔥
+        // ==========================================
+        function setupMediaSession(song) {
+            if ('mediaSession' in navigator) {
+                navigator.mediaSession.metadata = new MediaMetadata({ title: song.name, artist: song.artist, artwork: [{ src: song.img || fallbackImg, sizes: '500x500', type: 'image/jpeg' }] });
+                navigator.mediaSession.setActionHandler('play', togglePlay); navigator.mediaSession.setActionHandler('pause', togglePlay);
+                navigator.mediaSession.setActionHandler('previoustrack', playPrevious); navigator.mediaSession.setActionHandler('nexttrack', playNext);
+                navigator.mediaSession.setActionHandler('seekto', (details) => {
+                    if (audio.duration) { audio.currentTime = details.seekTime; updateOSPlayerPosition(); }
+                });
+            }
+
+            if (window.MusicControls) {
+                window.MusicControls.create({
+                    track       : song.name,
+                    artist      : song.artist,
+                    cover       : song.img || fallbackImg,
+                    isPlaying   : true,
+                    dismissable : false,
+                    hasPrev     : true,
+                    hasNext     : true,
+                    hasClose    : true,
+                    ticker      : 'Now playing ' + song.name,
+                    playIcon    : 'media_play',
+                    pauseIcon   : 'media_pause',
+                    prevIcon    : 'media_prev',
+                    nextIcon    : 'media_next',
+                    closeIcon   : 'media_close',
+                    notificationIcon: 'icon'
+                }, () => {}, () => {});
+
+                window.MusicControls.subscribe((action) => {
+                    const message = JSON.parse(action).message;
+                    switch(message) {
+                        case 'music-controls-next': playNext(); break;
+                        case 'music-controls-previous': playPrevious(); break;
+                        case 'music-controls-pause': togglePlay(); break;
+                        case 'music-controls-play': togglePlay(); break;
+                        case 'music-controls-destroy': closeFullPlayer(); audio.pause(); break;
+                    }
+                });
+                window.MusicControls.listen();
+                window.MusicControls.updateIsPlaying(isPlaying);
+            }
+        }
+
+        const playerEl = document.getElementById('full-player');
+        const swipeArea = document.getElementById('player-swipe-area');
+        window.openFullPlayer = () => { if(audio.src && audio.src !== location.href) { playerEl.classList.add('active'); history.pushState({overlay: 'player'}, null, '#player'); } };
+        window.closeFullPlayer = () => { playerEl.classList.remove('active'); playerEl.style.transform = ''; if(location.hash === '#player') history.back(); }
+
+        let startY = 0, currentY = 0, isDragging = false;
+        swipeArea.addEventListener('touchstart', e => { startY = e.touches[0].clientY; isDragging = true; playerEl.style.transition = 'none'; }, {passive: true});
+        swipeArea.addEventListener('touchmove', e => { if(!isDragging) return; currentY = e.touches[0].clientY; let diff = currentY - startY; if(diff > 0) playerEl.style.transform = `translateY(${diff}px)`; }, {passive: true});
+        swipeArea.addEventListener('touchend', () => { isDragging = false; playerEl.style.transition = 'transform 0.35s cubic-bezier(0.33, 1, 0.68, 1)'; if(currentY - startY > 120) closeFullPlayer(); else playerEl.style.transform = 'translateY(0)'; });
+
+        window.toggleCanvas = () => { canvasOn = !canvasOn; playerEl.classList.toggle('canvas-on', canvasOn); const vid = document.getElementById('canvas-video'); const btn = document.getElementById('canvas-btn'); canvasOn ? vid.play() : vid.pause(); btn.classList.toggle('text-primary', canvasOn); btn.classList.toggle('text-on-surface-variant', !canvasOn); };
+
+        document.addEventListener('deviceready', () => {
+            document.addEventListener('backbutton', (e) => {
+                e.preventDefault();
+                const fPlayer = document.getElementById('full-player'); const aModal = document.getElementById('auth-modal'); const hView = document.getElementById('history-view'); const pView = document.getElementById('playlist-view');
+                if (fPlayer.classList.contains('active')) closeFullPlayer();
+                else if (aModal.style.display === 'flex') closeAuthModal();
+                else if (hView.style.display === 'flex') closeHistoryView();
+                else if (pView.style.display === 'flex') closePlaylistView();
+                else { if (window.Capacitor && window.Capacitor.Plugins.App) window.Capacitor.Plugins.App.minimizeApp(); else if (navigator.app) navigator.app.exitApp(); }
+            }, false);
+        }, false);
+
+    </script>
+</body>
+</html>
