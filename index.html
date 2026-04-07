@@ -368,8 +368,10 @@
         const playlistView = document.getElementById('playlist-view');
         const playlistList = document.getElementById('playlist-list');
         
+        // 🔥 UNIFIED QUEUE SYSTEM 🔥
         const queues = { trending: [], suggested: [], playlist: [], search: [], liked: [], history: [] };
-        let currentQueue = [], upNextQueue = [], currentIndex = 0;
+        let currentQueue = [], currentIndex = 0; 
+        
         let isPlaying = false, canvasOn = false, isSeeking = false;
         let searchTimeout;
         let currentFetchId = 0; 
@@ -477,7 +479,7 @@
             audio.src = song.url;
             checkLikedStatus(song);
 
-            setTimeout(() => { fetchSmartQueue(song, false); }, 500);
+            setTimeout(() => { fetchSmartQueue(song); }, 500);
         }
 
         window.addEventListener('popstate', (e) => {
@@ -714,62 +716,65 @@
         }
         window.clearSearch = () => { document.getElementById('search-input').value = ''; handleLiveSearch(''); }
 
-        // 🔥 MODIFIED: LOAD MORE AND SMART QUEUE SYSTEM 🔥
-        async function fetchSmartQueue(song, append = false) {
-            if(!append) queueList.innerHTML = `<p class="text-xs text-primary animate-pulse">Analyzing vibe...</p>`;
-            
+        // 🔥 YOUTUBE MUSIC STYLE SMART VIBE FETCHING 🔥
+        async function fetchSmartQueue(song) {
+            const btn = document.getElementById('load-more-btn');
+            if(btn) btn.innerHTML = `<span class="material-symbols-outlined animate-spin text-[18px]">sync</span> Fetching...`;
+            else queueList.innerHTML = `<p class="text-xs text-primary animate-pulse">Analyzing vibe...</p>`;
+
             let lang = (song.language && song.language !== 'unknown') ? song.language : currentCategory;
             let artist = song.artist ? song.artist.split(',')[0].trim() : '';
+            let title = song.name.split('(')[0].trim();
             
-            // Primary fetch based on vibe
-            let query = artist ? (artist + " " + lang + " hits") : (`top ${lang} songs`);
-            let songs = await fetchAPI(query, 30);
-            
-            // Fallback if API returns empty
-            if (songs.length === 0) {
-                songs = await fetchAPI(`top trending ${lang} songs`, 30);
+            // Priority Queries: 1. Same Type/Vibe -> 2. Artist Mix -> 3. Fallback Trending Type
+            let queriesToTry = [
+                `${title} similar ${lang} songs`, // Tries to match the exact song vibe/type
+                `${artist} best ${lang} mix`,     // Tries to get the artist's vibe mix
+                `top trending ${lang} hits`,      // Fallback: If out of vibe, get different trending type
+                `latest viral ${lang} audio`      // Fallback 2
+            ];
+
+            let newSongs = [];
+            for (let q of queriesToTry) {
+                let songs = await fetchAPI(q, 30);
+                newSongs = songs.filter(s => 
+                    s.name.toLowerCase().trim() !== song.name.toLowerCase().trim() && 
+                    !currentQueue.some(cq => cq.url === s.url)
+                );
+                // Agar 5 se zyada fresh gane mil gaye us type ke, toh ruk jao
+                if (newSongs.length > 5) break; 
             }
 
-            if (songs.length > 0) {
-                let newSongs = songs.filter(s => s.name.toLowerCase().trim() !== song.name.toLowerCase().trim());
-                
-                if(append) { 
-                    // Remove duplicates that are already in upNextQueue or currently playing
-                    newSongs = newSongs.filter(ns => !upNextQueue.some(uq => uq.url === ns.url) && !currentQueue.some(cq => cq.url === ns.url)); 
-                    
-                    // If everything was a duplicate, get some random fresh hits
-                    if (newSongs.length === 0) {
-                        let randomFallback = await fetchAPI(`latest ${lang} hits`, 20);
-                        newSongs = randomFallback.filter(ns => !upNextQueue.some(uq => uq.url === ns.url) && !currentQueue.some(cq => cq.url === ns.url));
-                    }
-                    
-                    upNextQueue.push(...newSongs); 
-                } else { 
-                    upNextQueue = newSongs; 
-                }
-                renderUpNextUI();
-            } else if (append) {
-                // If totally empty, just refresh UI to stop loading state
-                renderUpNextUI();
+            if (newSongs.length > 0) {
+                currentQueue.push(...newSongs);
             }
+            
+            renderUpNextUI(); 
         }
 
         function renderUpNextUI() {
-            if(upNextQueue.length > 0) {
-                // Map the complete upNextQueue without slicing
-                let html = upNextQueue.map((sq, i) => `
-                    <div onclick="playFromUpNext(${i})" class="flex items-center gap-3 p-2 rounded-xl cursor-pointer hover:bg-white/5 transition">
+            // Visual queue starts exactly from the currently playing song
+            let visualQueue = currentQueue.slice(currentIndex);
+            
+            if(visualQueue.length > 0) {
+                let html = visualQueue.map((sq, i) => {
+                    let isPlaying = (i === 0);
+                    let titleColor = isPlaying ? 'text-primary' : 'text-white';
+                    let bgClass = isPlaying ? 'bg-white/5 border border-primary/20' : 'hover:bg-white/5 border border-transparent';
+                    
+                    return `
+                    <div onclick="playFromUpNext(${i})" class="flex items-center gap-3 p-2 rounded-xl cursor-pointer transition ${bgClass}">
                         <img src="${sq.img}" onerror="this.onerror=null; this.src='${fallbackImg}'" class="w-12 h-12 rounded-lg object-cover shadow-md shrink-0"/>
-                        <div class="overflow-hidden"><h4 class="text-sm font-bold text-white truncate">${sq.name}</h4><p class="text-xs text-on-surface-variant truncate">${sq.artist}</p></div>
-                    </div>`).join('');
+                        <div class="overflow-hidden flex-1"><h4 class="text-sm font-bold ${titleColor} truncate">${sq.name}</h4><p class="text-xs text-on-surface-variant truncate">${sq.artist}</p></div>
+                        ${isPlaying ? '<span class="material-symbols-outlined text-primary text-[18px]">equalizer</span>' : ''}
+                    </div>`;
+                }).join('');
                 
-                // Add "Load More" Button at the bottom
                 html += `
                     <button id="load-more-btn" onclick="loadMoreUpNext()" class="w-full py-3 mt-2 rounded-xl border border-white/5 bg-white/5 text-xs font-bold text-on-surface-variant hover:bg-white/10 hover:text-white transition flex items-center justify-center gap-2">
                         <span class="material-symbols-outlined text-[18px]">expand_more</span> Load More
                     </button>
                 `;
-                
                 queueList.innerHTML = html;
             } else { 
                 queueList.innerHTML = `<p class="text-xs text-on-surface-variant animate-pulse">Fetching more vibes...</p>`; 
@@ -777,27 +782,28 @@
         }
 
         window.loadMoreUpNext = async () => {
-            const btn = document.getElementById('load-more-btn');
-            if(btn) {
-                btn.innerHTML = `<span class="material-symbols-outlined animate-spin text-[18px]">sync</span> Fetching...`;
-                btn.onclick = null; // Prevent double click
-            }
-            
+            // Seed 'Load More' with the current playing song to get same vibe
             let baseSong = currentQueue[currentIndex];
-            if (upNextQueue.length > 0) {
-                // Pick a random song from the recently added vibe to evolve it smoothly
-                let startIndex = Math.max(0, upNextQueue.length - 10);
-                let randomIndex = startIndex + Math.floor(Math.random() * (upNextQueue.length - startIndex));
-                baseSong = upNextQueue[randomIndex] || baseSong;
-            }
-            
-            await fetchSmartQueue(baseSong, true); 
+            await fetchSmartQueue(baseSong); 
         };
 
-        window.playFromUpNext = (index) => { 
-            const song = upNextQueue[index]; 
-            currentQueue.splice(currentIndex + 1, 0, song); 
+        // 🔥 YOUTUBE MUSIC STYLE QUEUE JUMP 🔥
+        window.playFromUpNext = (visualIndex) => { 
+            // If user clicks the already playing song (index 0), do nothing
+            if (visualIndex === 0) return; 
+            
+            // 1. Find the actual position of the clicked song in the background list
+            let actualIndex = currentIndex + visualIndex;
+            
+            // 2. Remove the song from that position
+            let clickedSong = currentQueue.splice(actualIndex, 1)[0];
+            
+            // 3. Insert it immediately after the currently playing song
+            currentQueue.splice(currentIndex + 1, 0, clickedSong);
+            
+            // 4. Move our current position forward by 1 (to the newly inserted song)
             currentIndex++; 
+            
             loadAndPlay(null, currentIndex, false); 
         }
 
@@ -823,11 +829,19 @@
             if (playPromise !== undefined) { playPromise.then(_ => { isPlaying = true; updatePlayIcons(); }).catch(e => { isPlaying = false; updatePlayIcons(); }); }
 
             checkLikedStatus(song);
-            
             if (window.MusicControls) setupMediaSession(song);
             
-            if(fromUser) { localStorage.setItem('mid_last_artist', song.artist.split(',')[0]); setTimeout(() => { fetchSmartQueue(song, false); }, 500); } 
-            else { renderUpNextUI(); if(upNextQueue.length < 5) setTimeout(() => { fetchSmartQueue(song, true); }, 500); }
+            // Update UI instantly so the selected song jumps to the top
+            renderUpNextUI();
+            
+            if(fromUser) { 
+                localStorage.setItem('mid_last_artist', song.artist.split(',')[0]); 
+                setTimeout(() => { fetchSmartQueue(song); }, 500); 
+            } 
+            else { 
+                // Auto-fetch if we're getting close to the end of the queue
+                if(currentQueue.length - currentIndex < 5) setTimeout(() => { fetchSmartQueue(song); }, 500); 
+            }
 
             if(canvasOn) document.getElementById('canvas-video').play();
         };
@@ -837,18 +851,17 @@
         window.playNext = () => { 
             if (currentIndex < currentQueue.length - 1) {
                 currentIndex++;
-            } else if(upNextQueue.length > 0) { 
-                let upIndex = upNextQueue.findIndex(s => s.url === currentQueue[currentIndex].url);
-                let nextIndex = (upIndex !== -1 && upIndex < upNextQueue.length - 1) ? upIndex + 1 : 0;
-                currentQueue.push(upNextQueue[nextIndex]);
-                currentIndex++; 
             } else { 
                 currentIndex = 0; 
             } 
             loadAndPlay(null, currentIndex, false); 
         }
         
-        window.playPrevious = () => { currentIndex = (currentIndex - 1 + currentQueue.length) % currentQueue.length; loadAndPlay(null, currentIndex, false); }
+        window.playPrevious = () => { 
+            // Flawless Previous logic goes backward in the unified queue exactly to what was played before
+            currentIndex = (currentIndex - 1 + currentQueue.length) % currentQueue.length; 
+            loadAndPlay(null, currentIndex, false); 
+        }
 
         function updatePlayIcons() { 
             document.getElementById('mini-play-icon').innerText = isPlaying ? 'pause' : 'play_arrow'; 
