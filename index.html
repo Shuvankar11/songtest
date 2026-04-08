@@ -716,45 +716,62 @@
         }
         window.clearSearch = () => { document.getElementById('search-input').value = ''; handleLiveSearch(''); }
 
-        // 🔥 YOUTUBE MUSIC STYLE SMART VIBE FETCHING (PERFECT VIBE MATCH) 🔥
+        // 🔥 YOUTUBE MUSIC STYLE SMART VIBE FETCHING (WITH REMIX SUPPORT) 🔥
         async function fetchSmartQueue(song) {
             const btn = document.getElementById('load-more-btn');
             if(btn) btn.innerHTML = `<span class="material-symbols-outlined animate-spin text-[18px]">sync</span> Fetching...`;
             else queueList.innerHTML = `<p class="text-xs text-primary animate-pulse">Analyzing vibe...</p>`;
 
             let lang = (song.language && song.language !== 'unknown') ? song.language : currentCategory;
-            // Clean title for better search (removes brackets like "(From Stree 2)")
-            let title = song.name.replace(/\[.*?\]|\(.*?\)/g, "").split('-')[0].trim();
-            let artist = song.artist ? song.artist.split(',')[0].trim() : '';
+            let baseTitle = song.name.replace(/\[.*?\]|\(.*?\)/g, "").split('-')[0].trim().toLowerCase();
 
-            // Smart Queries: Title first for exact mood match, then Artist, then viral hits (No boring classics forced)
-            let queriesToTry = [
-                `${title} similar songs`,
-                `${title} mix`,
-                `${artist} smash hits`,
-                `top viral ${lang}`
-            ];
+            let artistsList = song.artist ? song.artist.split(',').map(a => a.trim()) : [];
+            let primaryArtist = artistsList[0] || '';
+            let secondaryArtist = artistsList.length > 1 ? artistsList[1] : '';
+
+            let queriesToTry = [];
+            if (primaryArtist) queriesToTry.push(`${primaryArtist} hits`);
+            if (secondaryArtist) queriesToTry.push(`${secondaryArtist} hits`);
+            if (primaryArtist) queriesToTry.push(`${primaryArtist} best of`);
+            queriesToTry.push(`top ${lang} hits`); 
 
             let newSongs = [];
+            let remixSongs = []; // Store remixes/versions here
+
             for (let q of queriesToTry) {
                 if (newSongs.length >= 15) break; 
 
                 let songs = await fetchAPI(q, 30);
 
-                let filtered = songs.filter(s => 
-                    s.name.toLowerCase().trim() !== song.name.toLowerCase().trim() && 
-                    !currentQueue.some(cq => cq.url === s.url) &&
-                    !newSongs.some(ns => ns.url === s.url)
-                );
-
-                if (filtered.length > 0) {
-                    filtered = filtered.sort(() => Math.random() - 0.5);
-                    newSongs.push(...filtered);
-                }
+                songs.forEach(s => {
+                    let sBaseTitle = s.name.replace(/\[.*?\]|\(.*?\)/g, "").split('-')[0].trim().toLowerCase();
+                    
+                    // Check if it's the EXACT same URL
+                    let isExactDuplicate = currentQueue.some(cq => cq.url === s.url) || 
+                                           newSongs.some(ns => ns.url === s.url) || 
+                                           remixSongs.some(rs => rs.url === s.url);
+                    
+                    // We block exactly identical song names completely
+                    if (!isExactDuplicate && s.name.toLowerCase().trim() !== song.name.toLowerCase().trim()) {
+                        
+                        // If it has the same base title (e.g. "Song Name" vs "Song Name (Remix)")
+                        if (sBaseTitle === baseTitle) {
+                            remixSongs.push(s); 
+                        } else {
+                            newSongs.push(s);
+                        }
+                    }
+                });
             }
 
-            if (newSongs.length > 0) {
-                currentQueue.push(...newSongs);
+            if (newSongs.length > 0 || remixSongs.length > 0) {
+                // Shuffle fresh songs
+                newSongs = newSongs.sort(() => Math.random() - 0.5);
+                // Shuffle remixes and take maximum 2-3 so they don't overflow the list
+                remixSongs = remixSongs.sort(() => Math.random() - 0.5).slice(0, 3);
+                
+                // Append regular songs first, and remixes at the bottom (thora niche)
+                currentQueue.push(...newSongs.slice(0, 12), ...remixSongs);
             }
             
             renderUpNextUI(); 
