@@ -716,7 +716,7 @@
         }
         window.clearSearch = () => { document.getElementById('search-input').value = ''; handleLiveSearch(''); }
 
-        // 🔥 YOUTUBE MUSIC STYLE SMART VIBE FETCHING (IMPROVED) 🔥
+        // 🔥 YOUTUBE MUSIC STYLE SMART VIBE FETCHING (PERFECT VIBE MATCH) 🔥
         async function fetchSmartQueue(song) {
             const btn = document.getElementById('load-more-btn');
             if(btn) btn.innerHTML = `<span class="material-symbols-outlined animate-spin text-[18px]">sync</span> Fetching...`;
@@ -725,38 +725,36 @@
             let lang = (song.language && song.language !== 'unknown') ? song.language : currentCategory;
             let artist = song.artist ? song.artist.split(',')[0].trim() : '';
 
-            // 1. Remove title from search completely so covers don't spam the list.
-            // 2. Mix different queries to get a true "Radio/Vibe" feel (Artist + Era/Hits)
+            // 1. "Radio" search brings the same artist AND other artists from the same era/vibe.
+            // 2. We ONLY move to generic hits/trending if the artist searches yield nothing.
             let queriesToTry = [
-                `${artist} radio mix`,       // Brings the artist AND similar artists
-                `best of ${lang} hits`,      // Brings popular vibes
-                `evergreen ${lang} melodies`,// Brings soothing/classic vibes
-                `top trending ${lang}`       // Fallback modern vibe
+                `${artist} radio`,
+                `${artist} hits`,
+                `${artist} similar`,
+                `best of ${lang} classic`,
+                `top trending ${lang}`
             ];
 
             let newSongs = [];
             for (let q of queriesToTry) {
-                let songs = await fetchAPI(q, 20);
+                // BUG FIX: Agar same vibe ke gane mil gaye hain, toh aage search karke list mix mat karo!
+                if (newSongs.length >= 15) break; 
 
-                // Filter out exact same songs & already queued songs
+                let songs = await fetchAPI(q, 30);
+
                 let filtered = songs.filter(s => 
                     s.name.toLowerCase().trim() !== song.name.toLowerCase().trim() && 
-                    !currentQueue.some(cq => cq.url === s.url)
+                    !currentQueue.some(cq => cq.url === s.url) &&
+                    !newSongs.some(ns => ns.url === s.url)
                 );
 
                 if (filtered.length > 0) {
-                    // Shuffle this specific batch to break API's strict ordering
                     filtered = filtered.sort(() => Math.random() - 0.5);
-                    // Take 5-6 songs from each query to build a diverse playlist
-                    newSongs.push(...filtered.slice(0, 6));
+                    newSongs.push(...filtered);
                 }
-
-                if (newSongs.length >= 15) break; 
             }
 
             if (newSongs.length > 0) {
-                // Final shuffle so the artist's songs mix perfectly with other artists
-                newSongs = newSongs.sort(() => Math.random() - 0.5);
                 currentQueue.push(...newSongs);
             }
             
