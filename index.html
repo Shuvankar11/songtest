@@ -716,7 +716,7 @@
         }
         window.clearSearch = () => { document.getElementById('search-input').value = ''; handleLiveSearch(''); }
 
-        // 🔥 YOUTUBE MUSIC STYLE SMART VIBE FETCHING 🔥
+        // 🔥 YOUTUBE MUSIC STYLE SMART VIBE FETCHING (IMPROVED) 🔥
         async function fetchSmartQueue(song) {
             const btn = document.getElementById('load-more-btn');
             if(btn) btn.innerHTML = `<span class="material-symbols-outlined animate-spin text-[18px]">sync</span> Fetching...`;
@@ -724,26 +724,39 @@
 
             let lang = (song.language && song.language !== 'unknown') ? song.language : currentCategory;
             let artist = song.artist ? song.artist.split(',')[0].trim() : '';
-            let title = song.name.split('(')[0].trim();
-            
+
+            // 1. Remove title from search completely so covers don't spam the list.
+            // 2. Mix different queries to get a true "Radio/Vibe" feel (Artist + Era/Hits)
             let queriesToTry = [
-                `${title} similar ${lang} songs`,
-                `${artist} best ${lang} mix`,
-                `top trending ${lang} hits`,
-                `latest viral ${lang} audio`
+                `${artist} radio mix`,       // Brings the artist AND similar artists
+                `best of ${lang} hits`,      // Brings popular vibes
+                `evergreen ${lang} melodies`,// Brings soothing/classic vibes
+                `top trending ${lang}`       // Fallback modern vibe
             ];
 
             let newSongs = [];
             for (let q of queriesToTry) {
-                let songs = await fetchAPI(q, 30);
-                newSongs = songs.filter(s => 
+                let songs = await fetchAPI(q, 20);
+
+                // Filter out exact same songs & already queued songs
+                let filtered = songs.filter(s => 
                     s.name.toLowerCase().trim() !== song.name.toLowerCase().trim() && 
                     !currentQueue.some(cq => cq.url === s.url)
                 );
-                if (newSongs.length > 5) break; 
+
+                if (filtered.length > 0) {
+                    // Shuffle this specific batch to break API's strict ordering
+                    filtered = filtered.sort(() => Math.random() - 0.5);
+                    // Take 5-6 songs from each query to build a diverse playlist
+                    newSongs.push(...filtered.slice(0, 6));
+                }
+
+                if (newSongs.length >= 15) break; 
             }
 
             if (newSongs.length > 0) {
+                // Final shuffle so the artist's songs mix perfectly with other artists
+                newSongs = newSongs.sort(() => Math.random() - 0.5);
                 currentQueue.push(...newSongs);
             }
             
@@ -800,15 +813,12 @@
             loadAndPlay(null, currentIndex, false); 
         }
 
-        // 🔥 FIX: SMART VIBE RESET ON FRESH PLAY 🔥
         window.loadAndPlay = (queueContext, index, fromUser = false) => {
             if (queueContext && queues[queueContext]) {
-                // Agar gaana Trending, Search ya Suggested se chalaya gaya hai
                 if (queueContext === 'trending' || queueContext === 'suggested' || queueContext === 'search') {
-                    currentQueue = [queues[queueContext][index]]; // Sirf wahi ek gaana lo
-                    currentIndex = 0; // Usi ko index 0 banao taaki koi fake history na dikhe
+                    currentQueue = [queues[queueContext][index]]; 
+                    currentIndex = 0; 
                 } else {
-                    // Agar Playlist, Liked Songs ya History hai, toh poori list ko normally behave karne do
                     currentQueue = [...queues[queueContext]];
                     currentIndex = index;
                 }
@@ -843,7 +853,6 @@
             
             if(fromUser) { 
                 localStorage.setItem('mid_last_artist', song.artist.split(',')[0]); 
-                // Ye line ab currentQueue empty hone ki wajah se fresh vibe queue fetch karegi!
                 setTimeout(() => { fetchSmartQueue(song); }, 500); 
             } 
             else { 
