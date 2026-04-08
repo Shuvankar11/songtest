@@ -723,21 +723,20 @@
             else queueList.innerHTML = `<p class="text-xs text-primary animate-pulse">Analyzing vibe...</p>`;
 
             let lang = (song.language && song.language !== 'unknown') ? song.language : currentCategory;
+            // Clean title for better search (removes brackets like "(From Stree 2)")
+            let title = song.name.replace(/\[.*?\]|\(.*?\)/g, "").split('-')[0].trim();
             let artist = song.artist ? song.artist.split(',')[0].trim() : '';
 
-            // 1. "Radio" search brings the same artist AND other artists from the same era/vibe.
-            // 2. We ONLY move to generic hits/trending if the artist searches yield nothing.
+            // Smart Queries: Title first for exact mood match, then Artist, then viral hits (No boring classics forced)
             let queriesToTry = [
-                `${artist} radio`,
-                `${artist} hits`,
-                `${artist} similar`,
-                `best of ${lang} classic`,
-                `top trending ${lang}`
+                `${title} similar songs`,
+                `${title} mix`,
+                `${artist} smash hits`,
+                `top viral ${lang}`
             ];
 
             let newSongs = [];
             for (let q of queriesToTry) {
-                // BUG FIX: Agar same vibe ke gane mil gaye hain, toh aage search karke list mix mat karo!
                 if (newSongs.length >= 15) break; 
 
                 let songs = await fetchAPI(q, 30);
