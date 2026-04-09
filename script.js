@@ -256,15 +256,35 @@ function renderGrid(songs, targetId, queueName) {
     `).join('');
 }
 
-// 🔥 FIX: Directly call refreshTrending on load so it uses smart queries
-window.onload = () => { refreshTrending(); loadSuggestedSection(); };
+// 🔥 FIX 1: Robust Initialization on page load
+document.addEventListener("DOMContentLoaded", () => {
+    setTimeout(() => {
+        refreshTrending();
+        loadSuggestedSection();
+    }, 300);
+});
 
+// 🔥 FIX 2: Added Timeout Logic to API calls to prevent Infinite Spinners
 async function fetchAPI(query, limit = 40) {
     let q = query.replace(/original/gi, '').trim(); if(!q) return [];
-    const apis = [ `https://saavn.me/search/songs?query=${encodeURIComponent(q)}&limit=${limit}`, `https://saavn.dev/api/search/songs?query=${encodeURIComponent(q)}&limit=${limit}`, `https://jiosaavn-api-privatecvc2.vercel.app/search/songs?query=${encodeURIComponent(q)}&limit=${limit}` ];
+    const apis = [ 
+        `https://saavn.me/search/songs?query=${encodeURIComponent(q)}&limit=${limit}`, 
+        `https://saavn.dev/api/search/songs?query=${encodeURIComponent(q)}&limit=${limit}`, 
+        `https://jiosaavn-api-privatecvc2.vercel.app/search/songs?query=${encodeURIComponent(q)}&limit=${limit}` 
+    ];
+    
+    // Timeout function: Aborts fetch if API is sleeping/hanging for more than 6 seconds
+    const fetchWithTimeout = (url, ms) => Promise.race([
+        fetch(url),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), ms))
+    ]);
+
     for (let url of apis) {
         try {
-            const res = await fetch(url); if (!res.ok) continue; const json = await res.json(); let results = json.data?.results || json.data || json.results;
+            const res = await fetchWithTimeout(url, 6000); 
+            if (!res.ok) continue; 
+            const json = await res.json(); 
+            let results = json.data?.results || json.data || json.results;
             if (results && results.length > 0) {
                 let rawSongs = results.map(s => {
                     let img = s.image && Array.isArray(s.image) ? s.image[s.image.length-1]?.url || s.image[s.image.length-1]?.link : fallbackImg; if(typeof s.image === 'string') img = s.image;
@@ -278,21 +298,31 @@ async function fetchAPI(query, limit = 40) {
                 for(let s of rawSongs) { let baseName = s.name.toLowerCase().replace(/\[.*?\]|\(.*?\)/g, "").split('-')[0].trim(); if(!names.has(baseName)) { names.add(baseName); uniqueSongs.push(s); } }
                 if(uniqueSongs.length > 0) return uniqueSongs.sort(() => Math.random() - 0.5); 
             }
-        } catch(e) {}
+        } catch(e) {
+            console.log("API taking too long, trying next...");
+        }
     }
     return [];
 }
 
+// 🔥 FIX 3: Auto-Retry if initial load fails
 async function fetchSection(query, targetId) {
     let myFetchId = ++currentFetchId; const grid = document.getElementById(targetId);
     grid.innerHTML = `<div class="col-span-full py-10 flex justify-center"><span class="material-symbols-outlined animate-spin text-primary text-4xl">sync</span></div>`;
-    const songs = await fetchAPI(query, 30);
+    
+    let songs = await fetchAPI(query, 30);
+    
+    // Auto-Retry Logic to wake up API
+    if (songs.length === 0) {
+        songs = await fetchAPI(query, 30);
+    }
+
     if (myFetchId !== currentFetchId) return; 
     
     if(songs.length > 0) { 
         queues.trending = songs; renderGrid(queues.trending, targetId, 'trending'); 
     } else {
-        grid.innerHTML = `<p class="col-span-full text-center text-on-surface-variant py-10">No songs found. Try refreshing.</p>`;
+        grid.innerHTML = `<div class="col-span-full text-center py-10"><p class="text-on-surface-variant mb-3">No songs found or servers are waking up.</p><button onclick="refreshTrending()" class="px-4 py-2 bg-surface-container text-white rounded-full text-xs font-bold border border-white/10 hover:border-primary/50 transition">Try Again</button></div>`;
     }
 }
 
@@ -305,7 +335,8 @@ window.refreshTrending = () => { fetchSection(categoryQueries[currentCategory][M
 async function loadSuggestedSection() {
     const lastArtist = localStorage.getItem('mid_last_artist');
     if (lastArtist && lastArtist !== 'Unknown' && lastArtist !== 'Artist') {
-        const songs = await fetchAPI(lastArtist + " hits", 15);
+        let songs = await fetchAPI(lastArtist + " hits", 15);
+        if(songs.length === 0) songs = await fetchAPI(lastArtist + " hits", 15); // Auto-retry
         if (songs.length > 0) {
             document.getElementById('suggested-section').style.display = 'block'; queues.suggested = songs; 
             document.getElementById('suggested-grid').innerHTML = queues.suggested.slice(0, 6).map((s, i) => `
@@ -320,7 +351,9 @@ async function loadSuggestedSection() {
 
 async function openPlaylistView(title, query) {
     document.getElementById('playlist-title').innerText = title; playlistView.style.display = 'flex'; history.pushState({overlay: 'playlist'}, null, '#playlist'); 
-    playlistList.innerHTML = `<p class="text-center text-primary animate-pulse py-10">Loading Playlist...</p>`; const songs = await fetchAPI(query, 30);
+    playlistList.innerHTML = `<p class="text-center text-primary animate-pulse py-10">Loading Playlist...</p>`; 
+    let songs = await fetchAPI(query, 30);
+    if(songs.length === 0) songs = await fetchAPI(query, 30); // Auto-retry
     if(songs.length > 0) {
         queues.playlist = songs;
         playlistList.innerHTML = queues.playlist.map((s, i) => `
@@ -330,6 +363,8 @@ async function openPlaylistView(title, query) {
                 <span class="material-symbols-outlined text-primary">play_arrow</span>
             </div>
         `).join('');
+    } else {
+        playlistList.innerHTML = `<p class="text-center text-on-surface-variant py-10">Failed to load playlist. Please go back and try again.</p>`;
     }
 }
 window.closePlaylistView = () => { playlistView.style.display = 'none'; if(location.hash === '#playlist') history.back(); }
@@ -379,7 +414,7 @@ window.handleLiveSearch = (val) => {
 }
 window.clearSearch = () => { document.getElementById('search-input').value = ''; handleLiveSearch(''); }
 
-// 🔥 YOUTUBE MUSIC STYLE SMART VIBE FETCHING (WITH REMIX SUPPORT) 🔥
+// 🔥 YOUTUBE MUSIC STYLE SMART VIBE FETCHING 🔥
 async function fetchSmartQueue(song) {
     const btn = document.getElementById('load-more-btn');
     if(btn) btn.innerHTML = `<span class="material-symbols-outlined animate-spin text-[18px]">sync</span> Fetching...`;
@@ -426,7 +461,6 @@ async function fetchSmartQueue(song) {
     if (newSongs.length > 0 || remixSongs.length > 0) {
         newSongs = newSongs.sort(() => Math.random() - 0.5);
         remixSongs = remixSongs.sort(() => Math.random() - 0.5).slice(0, 3);
-        
         currentQueue.push(...newSongs.slice(0, 12), ...remixSongs);
     }
     
@@ -439,7 +473,6 @@ function renderUpNextUI() {
             let isPlaying = (i === currentIndex);
             let titleColor = isPlaying ? 'text-primary' : 'text-white';
             let bgClass = isPlaying ? 'bg-white/5 border border-primary/20' : 'hover:bg-white/5 border border-transparent';
-            
             let opacityClass = i < currentIndex ? 'opacity-50' : 'opacity-100';
             
             return `
@@ -468,9 +501,7 @@ window.loadMoreUpNext = async () => {
 
 window.playFromUpNext = (index) => { 
     if (index === currentIndex) return; 
-    
     let clickedSong = currentQueue.splice(index, 1)[0];
-    
     if (index > currentIndex) {
         currentQueue.splice(currentIndex + 1, 0, clickedSong);
         currentIndex++;
@@ -479,7 +510,6 @@ window.playFromUpNext = (index) => {
         currentQueue.splice(currentIndex + 1, 0, clickedSong);
         currentIndex++;
     }
-    
     loadAndPlay(null, currentIndex, false); 
 }
 
@@ -541,9 +571,7 @@ window.playNext = async () => {
     } else { 
         let btn = document.getElementById('load-more-btn');
         if(btn) btn.innerHTML = `<span class="material-symbols-outlined animate-spin text-[18px]">sync</span> Loading Next...`;
-        
         await fetchSmartQueue(currentQueue[currentIndex]);
-        
         if (currentIndex < currentQueue.length - 1) {
             currentIndex++;
         } else {
