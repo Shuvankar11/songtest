@@ -275,6 +275,7 @@ function decode(str) { let txt = document.createElement('textarea'); txt.innerHT
 
 function renderGrid(songs, targetId, queueName) {
     const grid = document.getElementById(targetId);
+    if(!grid) return;
     grid.innerHTML = songs.slice(0, 16).map((s, i) => `
         <div onclick="loadAndPlay('${queueName}', ${i}, true)" class="glass-card p-3 rounded-2xl cursor-pointer hover:border-primary/50 transition-all duration-300 group border border-transparent hover:border-primary/20">
             <div class="relative w-full aspect-square mb-3 overflow-hidden rounded-xl">
@@ -292,17 +293,22 @@ function renderGrid(songs, targetId, queueName) {
 
 async function bootApp() {
     const grid = document.getElementById('trending-grid');
-    grid.innerHTML = `
-        <div class="col-span-full py-12 flex flex-col items-center justify-center gap-4">
-            <span class="material-symbols-outlined animate-spin text-primary text-5xl">sync</span>
-            <p class="text-sm font-bold text-primary animate-pulse">Waking up servers...</p>
-            <p class="text-xs text-on-surface-variant">This may take up to 10 seconds on first load.</p>
-        </div>`;
+    if(grid) {
+        grid.innerHTML = `
+            <div class="col-span-full py-12 flex flex-col items-center justify-center gap-4">
+                <span class="material-symbols-outlined animate-spin text-primary text-5xl">sync</span>
+                <p class="text-sm font-bold text-primary animate-pulse">Waking up servers...</p>
+            </div>`;
+    }
     await refreshTrending();
     loadSuggestedSection();
 }
 
-document.addEventListener("DOMContentLoaded", bootApp);
+if (document.readyState === 'loading') {
+    document.addEventListener("DOMContentLoaded", bootApp);
+} else {
+    bootApp();
+}
 
 async function fetchAPI(query, limit = 40) {
     let q = query.replace(/original/gi, '').trim(); if(!q) return [];
@@ -337,7 +343,7 @@ async function fetchAPI(query, limit = 40) {
                 if(uniqueSongs.length > 0) return uniqueSongs.sort(() => Math.random() - 0.5); 
             }
         } catch(e) {
-            console.log("API taking too long, trying next...");
+            console.log("API failed or timeout, trying next...");
         }
     }
     return [];
@@ -345,6 +351,7 @@ async function fetchAPI(query, limit = 40) {
 
 async function fetchSection(query, targetId) {
     let myFetchId = ++currentFetchId; const grid = document.getElementById(targetId);
+    if(!grid) return;
     let songs = await fetchAPI(query, 30);
     
     if (songs.length === 0) {
@@ -356,7 +363,7 @@ async function fetchSection(query, targetId) {
     if(songs.length > 0) { 
         queues.trending = songs; renderGrid(queues.trending, targetId, 'trending'); 
     } else {
-        grid.innerHTML = `<div class="col-span-full text-center py-10 flex flex-col items-center"><p class="text-on-surface-variant mb-4 font-bold">Servers are still waking up.</p><button onclick="refreshTrending()" class="px-5 py-2.5 bg-primary text-[#0c0d18] rounded-full text-sm font-bold shadow-lg hover:scale-95 transition">Try Again Now</button></div>`;
+        grid.innerHTML = `<div class="col-span-full text-center py-10 flex flex-col items-center"><p class="text-on-surface-variant mb-4 font-bold">Servers are offline right now.</p><button onclick="refreshTrending()" class="px-5 py-2.5 bg-primary text-[#0c0d18] rounded-full text-sm font-bold shadow-lg hover:scale-95 transition">Try Again</button></div>`;
     }
 }
 
@@ -366,7 +373,8 @@ window.setCategory = (btn, cat) => {
 }
 
 window.refreshTrending = async () => { 
-    document.getElementById('trending-grid').innerHTML = `<div class="col-span-full py-10 flex justify-center"><span class="material-symbols-outlined animate-spin text-primary text-4xl">sync</span></div>`;
+    const grid = document.getElementById('trending-grid');
+    if(grid) grid.innerHTML = `<div class="col-span-full py-10 flex justify-center"><span class="material-symbols-outlined animate-spin text-primary text-4xl">sync</span></div>`;
     let randomQuery = categoryQueries[currentCategory][Math.floor(Math.random() * categoryQueries[currentCategory].length)];
     await fetchSection(randomQuery, 'trending-grid'); 
 }
@@ -489,6 +497,7 @@ window.handleLiveSearch = (val) => {
 }
 window.clearSearch = () => { document.getElementById('search-input').value = ''; handleLiveSearch(''); }
 
+// 🔥 TRUE VIBE MATCH WITH STRICT LANGUAGE SORTING 🔥
 async function fetchSmartQueue(song) {
     const btn = document.getElementById('load-more-btn');
     if(btn) btn.innerHTML = `<span class="material-symbols-outlined animate-spin text-[18px]">sync</span> Fetching...`;
@@ -501,17 +510,19 @@ async function fetchSmartQueue(song) {
     let primaryArtist = artistsList[0] || '';
     let secondaryArtist = artistsList.length > 1 ? artistsList[1] : '';
 
+    // Step 1: Force API to search inside the specific language
     let queriesToTry = [];
-    if (primaryArtist) queriesToTry.push(`${primaryArtist} hits`);
-    if (secondaryArtist) queriesToTry.push(`${secondaryArtist} hits`);
-    if (primaryArtist) queriesToTry.push(`${primaryArtist} best of`);
+    if (primaryArtist) queriesToTry.push(`${primaryArtist} ${lang} hits`);
+    if (primaryArtist) queriesToTry.push(`${primaryArtist} ${lang}`);
+    if (secondaryArtist) queriesToTry.push(`${secondaryArtist} ${lang} hits`);
     queriesToTry.push(`top ${lang} hits`); 
+    if (primaryArtist) queriesToTry.push(`${primaryArtist} best of`); // Absolute fallback
 
     let newSongs = [];
     let remixSongs = []; 
 
     for (let q of queriesToTry) {
-        if (newSongs.length >= 15) break; 
+        if (newSongs.length >= 20) break; // Gather slightly more so we can filter properly
 
         let songs = await fetchAPI(q, 30);
 
@@ -533,7 +544,13 @@ async function fetchSmartQueue(song) {
     }
 
     if (newSongs.length > 0 || remixSongs.length > 0) {
-        newSongs = newSongs.sort(() => Math.random() - 0.5);
+        // Step 2: Strict Sieve (Chhalni) - Separate exact language songs from other languages (like Hindi)
+        let exactLangSongs = newSongs.filter(s => s.language === lang).sort(() => Math.random() - 0.5);
+        let otherLangSongs = newSongs.filter(s => s.language !== lang).sort(() => Math.random() - 0.5);
+        
+        // Merge them back -> Exact Language first, then Other Language at the bottom
+        newSongs = [...exactLangSongs, ...otherLangSongs];
+        
         remixSongs = remixSongs.sort(() => Math.random() - 0.5).slice(0, 3);
         currentQueue.push(...newSongs.slice(0, 12), ...remixSongs);
     }
