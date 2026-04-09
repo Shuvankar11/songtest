@@ -41,6 +41,23 @@ const fallbackImg = "logo.png";
 let tempBase64Dp = "";
 
 // ==========================================
+// 🔥 SHARE APP FUNCTION 🔥
+// ==========================================
+window.shareApp = () => {
+    if (navigator.share) {
+        navigator.share({
+            title: 'Midnight Vibes',
+            text: 'Listen to awesome ad-free music on Midnight Vibes! Check it out here:',
+            url: window.location.href
+        }).catch(err => console.log('Error sharing:', err));
+    } else {
+        navigator.clipboard.writeText(window.location.href).then(() => {
+            alert("App link copied to clipboard!");
+        });
+    }
+};
+
+// ==========================================
 // 🔥 BASS BOOST SYSTEM 🔥
 // ==========================================
 let audioCtx, bassFilter, sourceNode;
@@ -229,7 +246,6 @@ window.closeHistoryView = () => { document.getElementById('history-view').style.
 // ==========================================
 // API FETCH & DASHBOARD INITIALIZATION
 // ==========================================
-// 🔥 EXPANDED CATEGORY QUERIES FOR TRUE RANDOMNESS 🔥
 const categoryQueries = {
     'hindi': [
         'latest bollywood hits', 'top hindi romantic', '90s evergreen hindi', 'hindi party anthem', 
@@ -417,7 +433,6 @@ function checkLikedStatus(song) {
     if(liked) { icon.classList.add('text-tertiary'); icon.style.fontVariationSettings = "'FILL' 1"; } else { icon.classList.remove('text-tertiary'); icon.style.fontVariationSettings = "'FILL' 0"; }
 }
 
-// 🔥 SMART SEARCH SYSTEM 🔥
 window.handleLiveSearch = (val) => {
     const clearBtn = document.getElementById('clear-search'); const container = document.getElementById('search-results-container'); const dash = document.getElementById('main-dashboard');
     clearBtn.style.display = val.trim() ? 'block' : 'none'; if(!val.trim()) { container.style.display = 'none'; dash.style.display = 'block'; return; }
@@ -427,7 +442,6 @@ window.handleLiveSearch = (val) => {
         let query = val.trim();
         let lowerQ = query.toLowerCase();
         
-        // Map generic inputs to high quality API keywords
         const smartMap = {
             'old songs': '90s evergreen bollywood hits',
             'old hindi songs': '90s evergreen bollywood hits',
