@@ -227,7 +227,7 @@ window.openHistoryView = () => {
 window.closeHistoryView = () => { document.getElementById('history-view').style.display = 'none'; if(location.hash === '#history') history.back(); };
 
 // ==========================================
-// API FETCH & DASHBOARD
+// API FETCH & DASHBOARD INITIALIZATION
 // ==========================================
 const categoryQueries = {
     'hindi': ['latest bollywood hits', 'top hindi romantic', '90s evergreen hindi', 'hindi party anthem'],
@@ -256,15 +256,23 @@ function renderGrid(songs, targetId, queueName) {
     `).join('');
 }
 
-// 🔥 FIX 1: Robust Initialization on page load
-document.addEventListener("DOMContentLoaded", () => {
-    setTimeout(() => {
-        refreshTrending();
-        loadSuggestedSection();
-    }, 300);
-});
+// 🔥 FIX 1: Clean and singular initialization function
+async function bootApp() {
+    const grid = document.getElementById('trending-grid');
+    grid.innerHTML = `
+        <div class="col-span-full py-12 flex flex-col items-center justify-center gap-4">
+            <span class="material-symbols-outlined animate-spin text-primary text-5xl">sync</span>
+            <p class="text-sm font-bold text-primary animate-pulse">Waking up servers...</p>
+            <p class="text-xs text-on-surface-variant">This may take up to 10 seconds on first load.</p>
+        </div>`;
+    await refreshTrending();
+    loadSuggestedSection();
+}
 
-// 🔥 FIX 2: Added Timeout Logic to API calls to prevent Infinite Spinners
+// Ensure the app boots as soon as DOM is ready, and NO window.onload conflicts
+document.addEventListener("DOMContentLoaded", bootApp);
+
+// 🔥 FIX 2: Removed strict race timeouts. Let fetch wait for cold-starts naturally (up to 15s)
 async function fetchAPI(query, limit = 40) {
     let q = query.replace(/original/gi, '').trim(); if(!q) return [];
     const apis = [ 
@@ -273,15 +281,15 @@ async function fetchAPI(query, limit = 40) {
         `https://jiosaavn-api-privatecvc2.vercel.app/search/songs?query=${encodeURIComponent(q)}&limit=${limit}` 
     ];
     
-    // Timeout function: Aborts fetch if API is sleeping/hanging for more than 6 seconds
-    const fetchWithTimeout = (url, ms) => Promise.race([
-        fetch(url),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), ms))
-    ]);
-
     for (let url of apis) {
         try {
-            const res = await fetchWithTimeout(url, 6000); 
+            // Allows server 15 seconds to wake up and reply
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 15000); 
+            
+            const res = await fetch(url, { signal: controller.signal });
+            clearTimeout(timeoutId);
+
             if (!res.ok) continue; 
             const json = await res.json(); 
             let results = json.data?.results || json.data || json.results;
@@ -299,20 +307,18 @@ async function fetchAPI(query, limit = 40) {
                 if(uniqueSongs.length > 0) return uniqueSongs.sort(() => Math.random() - 0.5); 
             }
         } catch(e) {
-            console.log("API taking too long, trying next...");
+            console.log("API took too long or failed, checking backup API...");
         }
     }
     return [];
 }
 
-// 🔥 FIX 3: Auto-Retry if initial load fails
 async function fetchSection(query, targetId) {
     let myFetchId = ++currentFetchId; const grid = document.getElementById(targetId);
-    grid.innerHTML = `<div class="col-span-full py-10 flex justify-center"><span class="material-symbols-outlined animate-spin text-primary text-4xl">sync</span></div>`;
     
     let songs = await fetchAPI(query, 30);
     
-    // Auto-Retry Logic to wake up API
+    // Auto-Retry Logic just in case
     if (songs.length === 0) {
         songs = await fetchAPI(query, 30);
     }
@@ -322,7 +328,7 @@ async function fetchSection(query, targetId) {
     if(songs.length > 0) { 
         queues.trending = songs; renderGrid(queues.trending, targetId, 'trending'); 
     } else {
-        grid.innerHTML = `<div class="col-span-full text-center py-10"><p class="text-on-surface-variant mb-3">No songs found or servers are waking up.</p><button onclick="refreshTrending()" class="px-4 py-2 bg-surface-container text-white rounded-full text-xs font-bold border border-white/10 hover:border-primary/50 transition">Try Again</button></div>`;
+        grid.innerHTML = `<div class="col-span-full text-center py-10 flex flex-col items-center"><p class="text-on-surface-variant mb-4 font-bold">Servers are still waking up.</p><button onclick="refreshTrending()" class="px-5 py-2.5 bg-primary text-[#0c0d18] rounded-full text-sm font-bold shadow-lg hover:scale-95 transition">Try Again Now</button></div>`;
     }
 }
 
@@ -330,13 +336,15 @@ window.setCategory = (btn, cat) => {
     currentCategory = cat; document.querySelectorAll('.lang-btn').forEach(b => { b.classList.remove('bg-primary', 'text-[#0c0d18]'); b.classList.add('bg-surface-container', 'text-on-surface'); });
     btn.classList.remove('bg-surface-container', 'text-on-surface'); btn.classList.add('bg-primary', 'text-[#0c0d18]'); refreshTrending();
 }
-window.refreshTrending = () => { fetchSection(categoryQueries[currentCategory][Math.floor(Math.random() * categoryQueries[currentCategory].length)], 'trending-grid'); }
+window.refreshTrending = () => { 
+    document.getElementById('trending-grid').innerHTML = `<div class="col-span-full py-10 flex justify-center"><span class="material-symbols-outlined animate-spin text-primary text-4xl">sync</span></div>`;
+    fetchSection(categoryQueries[currentCategory][Math.floor(Math.random() * categoryQueries[currentCategory].length)], 'trending-grid'); 
+}
 
 async function loadSuggestedSection() {
     const lastArtist = localStorage.getItem('mid_last_artist');
     if (lastArtist && lastArtist !== 'Unknown' && lastArtist !== 'Artist') {
         let songs = await fetchAPI(lastArtist + " hits", 15);
-        if(songs.length === 0) songs = await fetchAPI(lastArtist + " hits", 15); // Auto-retry
         if (songs.length > 0) {
             document.getElementById('suggested-section').style.display = 'block'; queues.suggested = songs; 
             document.getElementById('suggested-grid').innerHTML = queues.suggested.slice(0, 6).map((s, i) => `
@@ -353,7 +361,7 @@ async function openPlaylistView(title, query) {
     document.getElementById('playlist-title').innerText = title; playlistView.style.display = 'flex'; history.pushState({overlay: 'playlist'}, null, '#playlist'); 
     playlistList.innerHTML = `<p class="text-center text-primary animate-pulse py-10">Loading Playlist...</p>`; 
     let songs = await fetchAPI(query, 30);
-    if(songs.length === 0) songs = await fetchAPI(query, 30); // Auto-retry
+    if(songs.length === 0) songs = await fetchAPI(query, 30); 
     if(songs.length > 0) {
         queues.playlist = songs;
         playlistList.innerHTML = queues.playlist.map((s, i) => `
