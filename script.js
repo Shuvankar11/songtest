@@ -229,11 +229,29 @@ window.closeHistoryView = () => { document.getElementById('history-view').style.
 // ==========================================
 // API FETCH & DASHBOARD INITIALIZATION
 // ==========================================
+// 🔥 EXPANDED CATEGORY QUERIES FOR TRUE RANDOMNESS 🔥
 const categoryQueries = {
-    'hindi': ['latest bollywood hits', 'top hindi romantic', '90s evergreen hindi', 'hindi party anthem'],
-    'bengali': ['latest bengali hits', 'bengali romantic songs', 'rabindra sangeet classic'],
-    'punjabi': ['latest punjabi pop', 'punjabi bhangra party', 'diljit dosanjh hits'],
-    'english': ['billboard hot 100', 'latest english pop', 'classic rock 80s']
+    'hindi': [
+        'latest bollywood hits', 'top hindi romantic', '90s evergreen hindi', 'hindi party anthem', 
+        'best of arijit singh', 'kumar sanu hits', 'bollywood lofi chill', 'hindi indie pop', 
+        'viral hindi songs', '2000s bollywood hits', 'new hindi songs', 'classic bollywood', 
+        'bollywood dance hits', 'udit narayan hits', 'shreya ghoshal romantic', 'sad emotional bollywood'
+    ],
+    'bengali': [
+        'latest bengali hits', 'bengali romantic songs', 'rabindra sangeet classic', 'bengali folk', 
+        'best of arijit singh bengali', 'bengali lofi', 'kolkata indie', 'bengali retro hits', 
+        'jeets gan', 'dev bengali hits', 'shreya ghoshal bengali', 'anupam roy hits'
+    ],
+    'punjabi': [
+        'latest punjabi pop', 'punjabi bhangra party', 'diljit dosanjh hits', 'ap dhillon', 
+        'punjabi romantic', 'punjabi hip hop', 'old punjabi hits', 'punjabi workout', 
+        'sidhu moose wala', 'karan aujla', 'hardy sandhu', 'punjabi sad hits'
+    ],
+    'english': [
+        'billboard hot 100', 'latest english pop', 'classic rock 80s', 'english edm', 
+        'viral tiktok songs english', 'chill pop english', '90s english hits', 'top english acoustic', 
+        'justin bieber', 'taylor swift hits', 'the weeknd', 'lofi beats english'
+    ]
 };
 let currentCategory = 'hindi';
 
@@ -256,7 +274,6 @@ function renderGrid(songs, targetId, queueName) {
     `).join('');
 }
 
-// 🔥 FIX 1: Clean and singular initialization function
 async function bootApp() {
     const grid = document.getElementById('trending-grid');
     grid.innerHTML = `
@@ -269,10 +286,8 @@ async function bootApp() {
     loadSuggestedSection();
 }
 
-// Ensure the app boots as soon as DOM is ready, and NO window.onload conflicts
 document.addEventListener("DOMContentLoaded", bootApp);
 
-// 🔥 FIX 2: Removed strict race timeouts. Let fetch wait for cold-starts naturally (up to 15s)
 async function fetchAPI(query, limit = 40) {
     let q = query.replace(/original/gi, '').trim(); if(!q) return [];
     const apis = [ 
@@ -281,15 +296,14 @@ async function fetchAPI(query, limit = 40) {
         `https://jiosaavn-api-privatecvc2.vercel.app/search/songs?query=${encodeURIComponent(q)}&limit=${limit}` 
     ];
     
+    const fetchWithTimeout = (url, ms) => Promise.race([
+        fetch(url),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), ms))
+    ]);
+
     for (let url of apis) {
         try {
-            // Allows server 15 seconds to wake up and reply
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 15000); 
-            
-            const res = await fetch(url, { signal: controller.signal });
-            clearTimeout(timeoutId);
-
+            const res = await fetchWithTimeout(url, 15000); 
             if (!res.ok) continue; 
             const json = await res.json(); 
             let results = json.data?.results || json.data || json.results;
@@ -307,7 +321,7 @@ async function fetchAPI(query, limit = 40) {
                 if(uniqueSongs.length > 0) return uniqueSongs.sort(() => Math.random() - 0.5); 
             }
         } catch(e) {
-            console.log("API took too long or failed, checking backup API...");
+            console.log("API taking too long, trying next...");
         }
     }
     return [];
@@ -315,10 +329,8 @@ async function fetchAPI(query, limit = 40) {
 
 async function fetchSection(query, targetId) {
     let myFetchId = ++currentFetchId; const grid = document.getElementById(targetId);
-    
     let songs = await fetchAPI(query, 30);
     
-    // Auto-Retry Logic just in case
     if (songs.length === 0) {
         songs = await fetchAPI(query, 30);
     }
@@ -336,15 +348,18 @@ window.setCategory = (btn, cat) => {
     currentCategory = cat; document.querySelectorAll('.lang-btn').forEach(b => { b.classList.remove('bg-primary', 'text-[#0c0d18]'); b.classList.add('bg-surface-container', 'text-on-surface'); });
     btn.classList.remove('bg-surface-container', 'text-on-surface'); btn.classList.add('bg-primary', 'text-[#0c0d18]'); refreshTrending();
 }
-window.refreshTrending = () => { 
+
+window.refreshTrending = async () => { 
     document.getElementById('trending-grid').innerHTML = `<div class="col-span-full py-10 flex justify-center"><span class="material-symbols-outlined animate-spin text-primary text-4xl">sync</span></div>`;
-    fetchSection(categoryQueries[currentCategory][Math.floor(Math.random() * categoryQueries[currentCategory].length)], 'trending-grid'); 
+    let randomQuery = categoryQueries[currentCategory][Math.floor(Math.random() * categoryQueries[currentCategory].length)];
+    await fetchSection(randomQuery, 'trending-grid'); 
 }
 
 async function loadSuggestedSection() {
     const lastArtist = localStorage.getItem('mid_last_artist');
     if (lastArtist && lastArtist !== 'Unknown' && lastArtist !== 'Artist') {
         let songs = await fetchAPI(lastArtist + " hits", 15);
+        if(songs.length === 0) songs = await fetchAPI(lastArtist + " hits", 15);
         if (songs.length > 0) {
             document.getElementById('suggested-section').style.display = 'block'; queues.suggested = songs; 
             document.getElementById('suggested-grid').innerHTML = queues.suggested.slice(0, 6).map((s, i) => `
@@ -402,12 +417,48 @@ function checkLikedStatus(song) {
     if(liked) { icon.classList.add('text-tertiary'); icon.style.fontVariationSettings = "'FILL' 1"; } else { icon.classList.remove('text-tertiary'); icon.style.fontVariationSettings = "'FILL' 0"; }
 }
 
+// 🔥 SMART SEARCH SYSTEM 🔥
 window.handleLiveSearch = (val) => {
     const clearBtn = document.getElementById('clear-search'); const container = document.getElementById('search-results-container'); const dash = document.getElementById('main-dashboard');
     clearBtn.style.display = val.trim() ? 'block' : 'none'; if(!val.trim()) { container.style.display = 'none'; dash.style.display = 'block'; return; }
     container.style.display = 'block'; dash.style.display = 'none'; document.getElementById('live-search-grid').innerHTML = `<p class="text-center text-primary animate-pulse py-10">Searching...</p>`;
+    
     clearTimeout(searchTimeout); searchTimeout = setTimeout(async () => {
-        const songs = await fetchAPI(val, 20); const rGrid = document.getElementById('live-search-grid');
+        let query = val.trim();
+        let lowerQ = query.toLowerCase();
+        
+        // Map generic inputs to high quality API keywords
+        const smartMap = {
+            'old songs': '90s evergreen bollywood hits',
+            'old hindi songs': '90s evergreen bollywood hits',
+            '90s songs': '90s evergreen bollywood hits',
+            '80s songs': '80s classic bollywood',
+            'new songs': 'latest trending hits',
+            'latest songs': 'latest trending hits',
+            'top songs': 'top bollywood hits',
+            'top hindi songs': 'top bollywood hits',
+            'trending songs': 'viral trending hits',
+            'trending': 'viral trending hits',
+            'love songs': 'top romantic hits',
+            'romantic songs': 'top romantic hits',
+            'sad songs': 'sad emotional bollywood',
+            'party songs': 'party anthem hits',
+            'workout songs': 'gym workout motivational',
+            'bhakti songs': 'top devotional bhajan',
+            'lofi': 'bollywood lofi chill'
+        };
+
+        if(smartMap[lowerQ]) {
+            query = smartMap[lowerQ];
+        } else {
+            if (lowerQ.includes('old songs')) query = lowerQ.replace('old songs', '90s evergreen hits');
+            else if (lowerQ.includes('top songs')) query = lowerQ.replace('top songs', 'top hits');
+            else if (lowerQ.includes('trending songs')) query = lowerQ.replace('trending songs', 'viral hits');
+        }
+
+        const songs = await fetchAPI(query, 30); 
+        const rGrid = document.getElementById('live-search-grid');
+        
         if(songs.length > 0) {
             queues.search = songs; 
             rGrid.innerHTML = queues.search.map((s, i) => `
@@ -417,12 +468,13 @@ window.handleLiveSearch = (val) => {
                     <span class="material-symbols-outlined text-primary">play_arrow</span>
                 </div>
             `).join('');
-        } else { rGrid.innerHTML = `<p class="text-center text-on-surface-variant py-10">No songs found.</p>`; }
+        } else { 
+            rGrid.innerHTML = `<p class="text-center text-on-surface-variant py-10">No songs found for "${val}". Try another keyword.</p>`; 
+        }
     }, 600); 
 }
 window.clearSearch = () => { document.getElementById('search-input').value = ''; handleLiveSearch(''); }
 
-// 🔥 YOUTUBE MUSIC STYLE SMART VIBE FETCHING 🔥
 async function fetchSmartQueue(song) {
     const btn = document.getElementById('load-more-btn');
     if(btn) btn.innerHTML = `<span class="material-symbols-outlined animate-spin text-[18px]">sync</span> Fetching...`;
