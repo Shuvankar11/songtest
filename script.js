@@ -256,12 +256,8 @@ function renderGrid(songs, targetId, queueName) {
     `).join('');
 }
 
-window.onload = () => { loadInitialDashboard(); loadSuggestedSection(); };
-
-async function loadInitialDashboard() {
-    document.getElementById('trending-grid').innerHTML = `<div class="col-span-full py-10 flex justify-center"><span class="material-symbols-outlined animate-spin text-primary text-4xl">sync</span></div>`;
-    fetchAPI('top hindi songs', 30).then(songs => { if(songs.length > 0) { queues.trending = songs; renderGrid(queues.trending, 'trending-grid', 'trending'); } });
-}
+// 🔥 FIX: Directly call refreshTrending on load so it uses smart queries
+window.onload = () => { refreshTrending(); loadSuggestedSection(); };
 
 async function fetchAPI(query, limit = 40) {
     let q = query.replace(/original/gi, '').trim(); if(!q) return [];
@@ -292,7 +288,12 @@ async function fetchSection(query, targetId) {
     grid.innerHTML = `<div class="col-span-full py-10 flex justify-center"><span class="material-symbols-outlined animate-spin text-primary text-4xl">sync</span></div>`;
     const songs = await fetchAPI(query, 30);
     if (myFetchId !== currentFetchId) return; 
-    if(songs.length > 0) { queues.trending = songs; renderGrid(queues.trending, targetId, 'trending'); } 
+    
+    if(songs.length > 0) { 
+        queues.trending = songs; renderGrid(queues.trending, targetId, 'trending'); 
+    } else {
+        grid.innerHTML = `<p class="col-span-full text-center text-on-surface-variant py-10">No songs found. Try refreshing.</p>`;
+    }
 }
 
 window.setCategory = (btn, cat) => {
